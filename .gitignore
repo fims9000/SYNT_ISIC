@@ -1,0 +1,85 @@
+# Директория с чекпоинтами (обязательно исключить)
+checkpoints/
+
+# Кэш и временные файлы
+core/cache/
+test_cache/
+*.cache
+*.tmp
+
+# Логи
+*.log
+core/logs/
+
+# Сгенерированные изображения
+generated_images/
+
+# Модели и веса (могут быть большими)
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Результаты XAI
+xai_results/
+
+# Временные файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Виртуальные окружения
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Файлы размером более 95MB (GitHub ограничение)
+# Добавляем конкретные большие файлы, если они есть
