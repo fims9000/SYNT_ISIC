@@ -6,3 +6,4 @@ Configuration management for ISIC Generator
 from .config_manager import ConfigManager
 
 __all__ = ['ConfigManager']
+

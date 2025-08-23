@@ -215,3 +215,4 @@ python test_infrastructure.py
 1. Обновите зависимости: `pip install -r requirements.txt`
 2. Запустите тесты: `python test_infrastructure.py`
 3. Проверьте совместимость с существующими конфигурациями
+

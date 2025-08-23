@@ -7,3 +7,4 @@ from .path_manager import PathManager
 from .logger import Logger
 
 __all__ = ['PathManager', 'Logger']
+

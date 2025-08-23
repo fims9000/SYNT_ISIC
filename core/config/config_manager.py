@@ -200,3 +200,4 @@ class ConfigManager:
             logging.info(f"Конфигурация импортирована из: {import_path}")
         except Exception as e:
             logging.error(f"Ошибка импорта конфигурации: {e}")
+
