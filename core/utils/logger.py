@@ -166,7 +166,7 @@ class Logger:
     
     def log_generation_start(self, class_name: str, count: int, output_dir: str):
         """Логирует начало генерации"""
-        self.logger.info(f"Generation started: {class_name} x{count} -> {output_dir}")
+        self.logger.info(f"Генерация начата: {class_name} x{count} -> {output_dir}")
     
     def log_generation_progress(self, class_name: str, current: int, total: int):
         """Логирует прогресс генерации"""
@@ -175,11 +175,11 @@ class Logger:
     
     def log_generation_complete(self, class_name: str, count: int, output_dir: str):
         """Логирует завершение генерации"""
-        self.logger.info(f"Generation completed: {class_name} x{count} -> {output_dir}")
+        self.logger.info(f"Генерация завершена: {class_name} x{count} -> {output_dir}")
     
     def log_error(self, error: Exception, context: str = ""):
         """Логирует ошибку"""
-        error_msg = f"ERROR {context}: {str(error)}"
+        error_msg = f"ОШИБКА {context}: {str(error)}"
         self.logger.error(error_msg, exc_info=True)
     
     def log_warning(self, message: str):
@@ -188,7 +188,7 @@ class Logger:
     
     def log_info(self, message: str):
         """Логирует информационное сообщение"""
-        self.logger.info(f"INFO: {message}")
+        self.logger.info(f"ИНФО: {message}")
     
     def log_debug(self, message: str):
         """Логирует отладочное сообщение"""
@@ -196,7 +196,7 @@ class Logger:
     
     def log_success(self, message: str):
         """Логирует успешное выполнение"""
-        self.logger.info(f"SUCCESS: {message}")
+        self.logger.info(f"УСПЕХ: {message}")
     
     def log_config_change(self, setting: str, old_value: Any, new_value: Any):
         """Логирует изменение конфигурации"""
@@ -204,11 +204,11 @@ class Logger:
     
     def log_model_loaded(self, class_name: str, model_path: str):
         """Логирует загрузку модели"""
-        self.logger.info(f"Model loaded: {class_name} <- {model_path}")
+        self.logger.info(f"Модель загружена: {class_name} <- {model_path}")
     
     def log_model_error(self, class_name: str, error: str):
         """Логирует ошибку загрузки модели"""
-        self.logger.error(f"Model loading error {class_name}: {error}")
+        self.logger.error(f"Ошибка загрузки модели {class_name}: {error}")
     
     def cleanup_old_logs(self, days_to_keep: int = 30):
         """Очищает старые логи"""

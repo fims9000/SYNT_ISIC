@@ -1,5 +1,5 @@
 """
-Model management for ISIC Generator
+Управление моделями для ISIC Generator
 Управление моделями машинного обучения
 """
 

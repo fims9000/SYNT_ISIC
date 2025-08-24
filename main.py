@@ -6,6 +6,7 @@ ISIC Synthetic Data Generator - GUI Interface
 
 import sys
 import os
+import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QGridLayout, QPushButton, QLabel, 
                              QCheckBox, QSpinBox, QProgressBar, QTextEdit, 
@@ -50,8 +51,75 @@ class GenerationWorker(QThread):
             self.generation_finished.emit(results)
             
         except Exception as e:
-            self.log_updated.emit(f"ERROR: Critical error: {str(e)}")
+            self.log_updated.emit(f"ОШИБКА: Критическая ошибка: {str(e)}")
             self.generation_finished.emit({"error": str(e)})
+
+class XAIWorker(QThread):
+    """Воркер для запуска полного XAI пайплайна (скрипт xai/XAI.py)"""
+    log_updated = pyqtSignal(str)
+    finished = pyqtSignal(bool)
+
+    def __init__(self, working_dir: str):
+        super().__init__()
+        self.working_dir = working_dir
+        self.proc = None
+        self._stop_requested = False
+
+    def run(self):
+        try:
+            self.log_updated.emit("XAI: запуск полного анализа (xai/XAI.py)...")
+            python_exe = sys.executable or "python"
+            script_path = os.path.join(self.working_dir, 'xai', 'XAI.py')
+            if not os.path.exists(script_path):
+                # альтернативный регистр папки
+                script_path = os.path.join(self.working_dir, 'XAI', 'XAI.py')
+            if not os.path.exists(script_path):
+                self.log_updated.emit("XAI: скрипт не найден: xai/XAI.py")
+                self.finished.emit(False)
+                return
+
+            # Гарантируем UTF-8 вывод, чтобы эмодзи/русский текст не падали в cp1251
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+            env["MPLBACKEND"] = "Agg"
+
+            proc = subprocess.Popen(
+                [python_exe, '-u', script_path],
+                cwd=self.working_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                bufsize=1,
+                env=env
+            )
+            self.proc = proc
+
+            # Стримим логи
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if line is not None:
+                    self.log_updated.emit(line.rstrip())
+
+            code = proc.wait()
+            success = (code == 0)
+            self.log_updated.emit(f"XAI: завершен с кодом {code}")
+            self.finished.emit(success)
+        except Exception as e:
+            self.log_updated.emit(f"XAI: ошибка: {str(e)}")
+            self.finished.emit(False)
+        finally:
+            self.proc = None
+
+    def stop(self):
+        try:
+            self._stop_requested = True
+            if self.proc and self.proc.poll() is None:
+                self.log_updated.emit("XAI: terminating process...")
+                self.proc.kill()
+        except Exception:
+            pass
 
 class SyntheticDataGenerator(QMainWindow):
     def __init__(self):
@@ -67,6 +135,10 @@ class SyntheticDataGenerator(QMainWindow):
             self.logger = Logger()
             self.cache_manager = CacheManager()
             self.generator = ImageGenerator(self.config_manager)
+            # Включаем XAI-хук: каждые 10 изображений
+            self.generator.set_xai_hook(self._run_xai_for_image, every_n=10)
+            # Выставляем общий seed (при желании можно сделать настраиваемым)
+            self.generator.set_generation_seed(42)
         except Exception as e:
             QMessageBox.critical(None, "Ошибка инициализации", 
                                f"Не удалось инициализировать core компоненты: {str(e)}")
@@ -75,11 +147,14 @@ class SyntheticDataGenerator(QMainWindow):
         # Состояние приложения
         self.is_generating = False
         self.generation_worker = None
+        self.xai_worker = None
         self.selected_models_dir = ""
         self.selected_output_dir = ""
         
         # Состояние изображений
         self.current_image_path = None
+        # Режим XAI (выключен по умолчанию)
+        self.xai_mode = False
         
         # Загружаем доступные модели
         self.available_classes = self.generator.get_available_classes()
@@ -97,9 +172,9 @@ class SyntheticDataGenerator(QMainWindow):
         self.memory_update_timer.start(2000)  # Обновляем каждые 2 секунды
         
         # Логируем запуск
-        self.logs_text.append("System initialized. Ready for generation.")
-        self.logs_text.append(f"Available models: {len(self.available_classes)}")
-        self.logs_text.append(f"Available classes: {', '.join(self.available_classes)}")
+        self.logs_text.append("Система инициализирована. Готова к генерации.")
+        self.logs_text.append(f"Доступные модели: {len(self.available_classes)}")
+        self.logs_text.append(f"Доступные классы: {', '.join(self.available_classes)}")
         
         # Обновляем информацию о памяти
         self.update_memory_info()
@@ -115,13 +190,13 @@ class SyntheticDataGenerator(QMainWindow):
             if torch.cuda.is_available():
                 memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
                 memory_reserved = torch.cuda.memory_reserved() / 1024**3  # GB
-                self.memory_info_label.setText(f"Memory: {memory_allocated:.2f}GB / {memory_reserved:.2f}GB")
+                self.memory_info_label.setText(f"Память: {memory_allocated:.2f}ГБ / {memory_reserved:.2f}ГБ")
             else:
-                self.memory_info_label.setText("Memory: CPU mode")
+                self.memory_info_label.setText("Память: Режим CPU")
                 
         except Exception as e:
-            self.memory_info_label.setText("Memory: Error")
-            self.logs_text.append(f"Memory update error: {str(e)}")
+            self.memory_info_label.setText("Память: Ошибка")
+            self.logs_text.append(f"Ошибка обновления памяти: {str(e)}")
         
     def _cleanup_logs_on_startup(self):
         """Очищает логи при запуске программы"""
@@ -146,11 +221,11 @@ class SyntheticDataGenerator(QMainWindow):
                         
         except Exception as e:
             # Игнорируем ошибки очистки логов
-            print(f"Log cleanup error: {e}")
+            print(f"Ошибка очистки логов: {e}")
         
     def init_ui(self):
         """Инициализация пользовательского интерфейса"""
-        self.setWindowTitle("ISIC Synthetic Data Generator")
+        self.setWindowTitle("ISIC Генератор Синтетических Данных")
         self.setGeometry(100, 100, 1200, 800)
         
         
@@ -307,7 +382,7 @@ class SyntheticDataGenerator(QMainWindow):
         
     def create_top_panel(self, main_layout):
         """Создает верхнюю панель"""
-        top_group = QGroupBox("System Controls")
+        top_group = QGroupBox("Системные элементы управления")
         top_layout = QVBoxLayout(top_group)
         top_layout.setSpacing(25)
         
@@ -315,11 +390,11 @@ class SyntheticDataGenerator(QMainWindow):
         button_layout = QHBoxLayout()
         
         # Кнопка выбора модели
-        self.select_model_btn = QPushButton("Select Model")
+        self.select_model_btn = QPushButton("Выбрать модель")
         self.select_model_btn.setToolTip("Выберите папку с моделями (checkpoints)")
         
         # Кнопка выбора директории вывода
-        self.select_output_btn = QPushButton("Select Output Directory")
+        self.select_output_btn = QPushButton("Выбрать папку вывода")
         self.select_output_btn.setToolTip("Выберите папку для сохранения изображений")
         
         # Тумблер XAI Mode
@@ -332,6 +407,12 @@ class SyntheticDataGenerator(QMainWindow):
         self._populate_device_combo()
         self.device_combo.setToolTip("Выберите устройство для генерации")
         
+        # Контрол частоты XAI по шагам (n_steps)
+        self.xai_step_spin = QSpinBox()
+        self.xai_step_spin.setRange(1, 1000)
+        self.xai_step_spin.setValue(50)  # по умолчанию как сейчас
+        self.xai_step_spin.setToolTip("Сохранять XAI шаги каждые N timesteps (0..1000, включительно 1000)")
+        
         # Добавляем кнопки в layout
         button_layout.addWidget(self.select_model_btn)
         button_layout.addSpacing(10)
@@ -339,7 +420,10 @@ class SyntheticDataGenerator(QMainWindow):
         button_layout.addStretch()
         button_layout.addWidget(self.xai_mode_btn)
         button_layout.addSpacing(10)
-        button_layout.addWidget(QLabel("Device:"))
+        button_layout.addWidget(QLabel("XAI шаги:"))
+        button_layout.addWidget(self.xai_step_spin)
+        button_layout.addSpacing(10)
+        button_layout.addWidget(QLabel("Устройство:"))
         button_layout.addSpacing(5)
         button_layout.addWidget(self.device_combo)
         
@@ -375,7 +459,7 @@ class SyntheticDataGenerator(QMainWindow):
         
     def create_left_panel(self, main_layout):
         """Создает левую панель"""
-        left_group = QGroupBox("Class Selection & Configuration")
+        left_group = QGroupBox("Выбор и настройка классов")
         left_layout = QVBoxLayout(left_group)
         left_layout.setSpacing(18)  # Увеличиваем междустрочный интервал
         
@@ -383,7 +467,7 @@ class SyntheticDataGenerator(QMainWindow):
         self.class_widgets = {}
         
         # Добавляем заголовок для классов
-        class_header = QLabel("Available Classes:")
+        class_header = QLabel("Доступные классы:")
         class_header.setStyleSheet("font-weight: bold; color: #404040; margin-bottom: 8px;")
         left_layout.addWidget(class_header)
         left_layout.addSpacing(5)
@@ -411,7 +495,7 @@ class SyntheticDataGenerator(QMainWindow):
             
             class_layout.addWidget(checkbox)
             class_layout.addStretch()  # Добавляем растягивающийся элемент
-            class_layout.addWidget(QLabel("Count:"))
+            class_layout.addWidget(QLabel("Количество:"))
             class_layout.addWidget(spinbox)
             
             left_layout.addLayout(class_layout)
@@ -430,15 +514,15 @@ class SyntheticDataGenerator(QMainWindow):
         left_layout.addSpacing(10)
         
         # Заголовок для кнопок управления
-        control_header = QLabel("Generation Controls:")
+        control_header = QLabel("Управление генерацией:")
         control_header.setStyleSheet("font-weight: bold; color: #404040; margin-bottom: 8px;")
         left_layout.addWidget(control_header)
         left_layout.addSpacing(5)
         
         # Кнопки управления
-        self.start_btn = QPushButton("Start Generation")
-        self.stop_btn = QPushButton("Stop Generation")
-        self.regenerate_btn = QPushButton("Regenerate")
+        self.start_btn = QPushButton("Начать генерацию")
+        self.stop_btn = QPushButton("Остановить генерацию")
+        self.regenerate_btn = QPushButton("Регенерировать")
         
         # Изначально Stop отключена
         self.stop_btn.setEnabled(False)
@@ -456,12 +540,12 @@ class SyntheticDataGenerator(QMainWindow):
         
     def create_center_panel(self, main_layout):
         """Создает центральную панель"""
-        center_group = QGroupBox("Image Generation Preview")
+        center_group = QGroupBox("Предварительный просмотр генерации изображений")
         center_layout = QVBoxLayout(center_group)
         center_layout.setSpacing(18)
         
         # Placeholder для изображения
-        self.image_label = QLabel("Generated Image Preview\n\nSelect class folder and image file from the right panel")
+        self.image_label = QLabel("Предварительный просмотр сгенерированного изображения\n\nВыберите папку класса и файл изображения в правой панели")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumSize(600, 400)
         self.image_label.setStyleSheet("""
@@ -480,7 +564,7 @@ class SyntheticDataGenerator(QMainWindow):
         
         # Прогресс-бар
         progress_layout = QHBoxLayout()
-        progress_label = QLabel("Generation Progress:")
+        progress_label = QLabel("Прогресс генерации:")
         progress_label.setStyleSheet("font-weight: bold; color: #404040;")
         
         self.progress_bar = QProgressBar()
@@ -497,16 +581,16 @@ class SyntheticDataGenerator(QMainWindow):
         
     def create_right_panel(self, main_layout):
         """Создает правую панель"""
-        right_group = QGroupBox("Project Structure")
+        right_group = QGroupBox("Структура проекта")
         right_layout = QVBoxLayout(right_group)
         right_layout.setSpacing(18)
         
         # Дерево проекта
         self.project_tree = QTreeWidget()
-        self.project_tree.setHeaderLabel("Project Components")
+        self.project_tree.setHeaderLabel("Компоненты проекта")
         
         # Заполняем дерево
-        root_item = QTreeWidgetItem(self.project_tree, ["Synthetic Data Project"])
+        root_item = QTreeWidgetItem(self.project_tree, ["Проект синтетических данных"])
         self.generated_images_item = QTreeWidgetItem(root_item, ["generated_images"])
         self.xai_results_item = QTreeWidgetItem(root_item, ["xai_results"])
         self.checkpoints_item = QTreeWidgetItem(root_item, ["checkpoints"])
@@ -519,7 +603,7 @@ class SyntheticDataGenerator(QMainWindow):
         right_layout.addWidget(self.project_tree)
         
         # Список файлов изображений
-        files_group = QGroupBox("Generated Images")
+        files_group = QGroupBox("Сгенерированные изображения")
         files_layout = QVBoxLayout(files_group)
         
         # Список папок классов
@@ -532,12 +616,31 @@ class SyntheticDataGenerator(QMainWindow):
         self.images_list.setMaximumHeight(150)
         self.images_list.itemClicked.connect(self.on_image_file_clicked)
         
-        files_layout.addWidget(QLabel("Class Folders:"))
+        files_layout.addWidget(QLabel("Папки классов:"))
         files_layout.addWidget(self.class_folders_list)
-        files_layout.addWidget(QLabel("Image Files:"))
+        files_layout.addWidget(QLabel("Файлы изображений:"))
         files_layout.addWidget(self.images_list)
         
         right_layout.addWidget(files_group)
+
+        # XAI Results panel
+        xai_group = QGroupBox("Результаты XAI")
+        xai_layout = QVBoxLayout(xai_group)
+        
+        self.xai_runs_list = QListWidget()
+        self.xai_runs_list.setMaximumHeight(120)
+        self.xai_runs_list.itemClicked.connect(self.on_xai_run_clicked)
+        
+        self.xai_files_list = QListWidget()
+        self.xai_files_list.setMaximumHeight(180)
+        self.xai_files_list.itemClicked.connect(self.on_xai_file_clicked)
+        
+        xai_layout.addWidget(QLabel("Запуски:"))
+        xai_layout.addWidget(self.xai_runs_list)
+        xai_layout.addWidget(QLabel("Файлы:"))
+        xai_layout.addWidget(self.xai_files_list)
+        
+        right_layout.addWidget(xai_group)
         
         # Устанавливаем фиксированную ширину для правой панели
         right_group.setFixedWidth(250)
@@ -547,7 +650,7 @@ class SyntheticDataGenerator(QMainWindow):
     def create_bottom_panel(self, main_layout):
         """Создает нижнюю панель"""
         # Панель логов
-        logs_group = QGroupBox("System Logs")
+        logs_group = QGroupBox("Системные логи")
         logs_layout = QVBoxLayout(logs_group)
         logs_layout.setSpacing(18)
         
@@ -557,32 +660,32 @@ class SyntheticDataGenerator(QMainWindow):
         self.logs_text.setMaximumHeight(250)  # Увеличиваем максимальную высоту
         
         # Теперь можем добавлять отладочные сообщения
-        self.logs_text.append("UI initialized successfully")
+        self.logs_text.append("Интерфейс успешно инициализирован")
         
         logs_layout.addWidget(self.logs_text)
         logs_layout.addSpacing(5)
         
         # Добавляем информацию о логах
-        logs_info = QLabel("System logs and generation progress will appear here")
+        logs_info = QLabel("Системные логи и прогресс генерации будут отображаться здесь")
         logs_info.setStyleSheet("color: #606060; font-style: italic; font-size: 9pt;")
         logs_layout.addWidget(logs_info)
         
         # Панель конфигурации
-        config_group = QGroupBox("System Configuration")
+        config_group = QGroupBox("Системная конфигурация")
         config_layout = QVBoxLayout(config_group)
         config_layout.setSpacing(12)  # Увеличиваем междустрочный интервал
         
         # Статическая информация
-        config_header = QLabel("Current Configuration:")
+        config_header = QLabel("Текущая конфигурация:")
         config_header.setStyleSheet("font-weight: bold; color: #404040; margin-bottom: 8px;")
         config_layout.addWidget(config_header)
         config_layout.addSpacing(5)
         
-        self.device_info_label = QLabel("Device: CPU")
-        self.model_path_label = QLabel("Model Path: Not selected")
-        self.available_models_label = QLabel(f"Available Models: {len(self.available_classes)}")
-        self.color_config_label = QLabel("Color Config: Loaded")
-        self.memory_info_label = QLabel("Memory: Not available")
+        self.device_info_label = QLabel("Устройство: CPU")
+        self.model_path_label = QLabel("Путь к модели: Не выбран")
+        self.available_models_label = QLabel(f"Доступные модели: {len(self.available_classes)}")
+        self.color_config_label = QLabel("Цветовая конфигурация: Загружена")
+        self.memory_info_label = QLabel("Память: Недоступна")
         
         config_layout.addWidget(self.device_info_label)
         config_layout.addSpacing(2)
@@ -614,6 +717,12 @@ class SyntheticDataGenerator(QMainWindow):
         # ComboBox устройства
         self.device_combo.currentTextChanged.connect(self.on_device_changed)
         
+        # Тумблер XAI Mode
+        self.xai_mode_btn.toggled.connect(self.on_xai_toggle)
+        
+        # Инициализация XAI списков
+        self.update_xai_lists()
+        
     def on_project_item_clicked(self, item, column):
         """Обработчик кликов по элементам дерева проекта"""
         try:
@@ -622,12 +731,12 @@ class SyntheticDataGenerator(QMainWindow):
             if item_text == "generated_images":
                 self.open_generated_images_directory()
             elif item_text == "xai_results":
-                self.open_xai_results_directory()
+                self.update_xai_lists()
             elif item_text == "checkpoints":
                 self.open_checkpoints_directory()
                 
         except Exception as e:
-            self.logs_text.append(f"Error opening directory: {str(e)}")
+            self.logs_text.append(f"Ошибка открытия папки: {str(e)}")
             
     def open_generated_images_directory(self):
         """Открывает папку с сгенерированными изображениями и показывает первое изображение"""
@@ -635,7 +744,7 @@ class SyntheticDataGenerator(QMainWindow):
             if hasattr(self, 'selected_output_dir') and self.selected_output_dir:
                 # Открываем папку в проводнике Windows
                 os.startfile(self.selected_output_dir)
-                self.logs_text.append(f"Opened generated images directory: {self.selected_output_dir}")
+                self.logs_text.append(f"Открыта папка сгенерированных изображений: {self.selected_output_dir}")
                 
                 # Показываем первое найденное изображение в интерфейсе
                 self.show_first_generated_image()
@@ -643,7 +752,7 @@ class SyntheticDataGenerator(QMainWindow):
                 QMessageBox.information(self, "Информация", "Сначала выберите папку для вывода!")
                 
         except Exception as e:
-            self.logs_text.append(f"Error opening generated images directory: {str(e)}")
+            self.logs_text.append(f"Ошибка открытия папки сгенерированных изображений: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -669,12 +778,12 @@ class SyntheticDataGenerator(QMainWindow):
                 # Берем первое изображение
                 first_image_path = sorted(found_images)[0]
                 self.display_image(first_image_path)
-                self.logs_text.append(f"Loaded {len(found_images)} images from output directory")
+                self.logs_text.append(f"Загружено {len(found_images)} изображений из папки вывода")
             else:
-                self.image_label.setText("Generated Image Preview\n\nNo images found in output directory")
+                self.image_label.setText("Предварительный просмотр сгенерированного изображения\n\nВ папке вывода не найдено изображений")
                 
         except Exception as e:
-            self.logs_text.append(f"Error showing first image: {str(e)}")
+            self.logs_text.append(f"Ошибка показа первого изображения: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -685,6 +794,76 @@ class SyntheticDataGenerator(QMainWindow):
             
             # Загружаем изображение
             pil_image = Image.open(image_path)
+            
+            # Если XAI режим включен — формируем оверлей поверх изображения
+            if getattr(self, 'xai_mode', False):
+                _xai_func = None
+                try:
+                    # 1) Пытаемся загрузить модуль напрямую по пути файла (надёжно при конфликтах пакетов)
+                    import importlib.util
+                    mod_path = os.path.join(os.getcwd(), 'xai', 'xai_integration.py')
+                    if not os.path.exists(mod_path):
+                        mod_path = os.path.join(os.getcwd(), 'XAI', 'xai_integration.py')
+                    spec = importlib.util.spec_from_file_location('xai_xai_integration_dynamic', mod_path)
+                    if spec and spec.loader:
+                        dyn_mod = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(dyn_mod)
+                        _xai_func = getattr(dyn_mod, 'run_xai_analysis', None)
+                        self.logs_text.append(f"XAI динамически загружен из: {mod_path}")
+                except Exception as e0:
+                    self.logs_text.append(f"Импорт XAI по пути не удался: {str(e0)}")
+                
+                if _xai_func is None:
+                    # 2) Пробуем пакетный экспорт
+                    try:
+                        from xai import run_xai_analysis as _xai_func
+                    except Exception as e1:
+                        # 3) Пробуем импорт пакета и извлечение атрибута
+                        try:
+                            import importlib
+                            mod = importlib.import_module('xai.xai_integration')
+                            _xai_func = getattr(mod, 'run_xai_analysis')
+                            try:
+                                mod_path = getattr(mod, '__file__', 'unknown')
+                                self.logs_text.append(f"XAI загружен из: {mod_path}")
+                            except Exception:
+                                pass
+                        except Exception as e2:
+                            _xai_func = None
+                            self.logs_text.append(f"Резервный импорт XAI не удался: {str(e2)} (основной: {str(e1)})")
+                if _xai_func is None:
+                    # Третий вариант: прямой импорт по пути файла
+                    try:
+                        import importlib.util
+                        mod_path = os.path.join(os.getcwd(), 'xai', 'xai_integration.py')
+                        if not os.path.exists(mod_path):
+                            mod_path = os.path.join(os.getcwd(), 'XAI', 'xai_integration.py')
+                        spec = importlib.util.spec_from_file_location('xai_xai_integration_dynamic', mod_path)
+                        if spec and spec.loader:
+                            dyn_mod = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(dyn_mod)
+                            _xai_func = getattr(dyn_mod, 'run_xai_analysis', None)
+                            self.logs_text.append(f"XAI динамически загружен из: {mod_path}")
+                    except Exception as e3:
+                        self.logs_text.append(f"Импорт XAI по пути не удался: {str(e3)}")
+
+                if _xai_func is not None:
+                    try:
+                        device = getattr(self.generator, 'device', None)
+                        classifier_path = os.path.join(os.getcwd(), 'checkpoints', 'classifier.pth')
+                        save_dir = os.path.join(os.getcwd(), 'xai_results')
+                        overlay_pil, saved_path = _xai_func(
+                            image_path,
+                            device=device,
+                            classifier_path=classifier_path,
+                            save_dir=save_dir
+                        )
+                        pil_image = overlay_pil
+                        self.logs_text.append(f"XAI оверлей сохранен: {saved_path}")
+                    except Exception as e:
+                        self.logs_text.append(f"Ошибка выполнения XAI (возврат к оригиналу): {str(e)}")
+                else:
+                    self.logs_text.append("Импорт XAI не разрешен; показывается оригинальное изображение")
             
             # Конвертируем в QPixmap
             from PyQt5.QtGui import QPixmap
@@ -697,9 +876,13 @@ class SyntheticDataGenerator(QMainWindow):
             pixmap = QPixmap()
             pixmap.loadFromData(buffer.getvalue())
             
-            # Отображаем изображение в исходном размере
+            # Масштабируем под доступную область с сохранением пропорций
+            target_size = self.image_label.size()
+            if target_size.width() > 0 and target_size.height() > 0:
+                pixmap = pixmap.scaled(target_size, Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
+            
             self.image_label.setPixmap(pixmap)
-            self.image_label.setScaledContents(False)  # Не растягиваем изображение
+            self.image_label.setScaledContents(False)  # Управляем масштабом вручную
             
             # Центрируем изображение
             self.image_label.setAlignment(Qt.AlignCenter)
@@ -708,10 +891,72 @@ class SyntheticDataGenerator(QMainWindow):
             self.current_image_path = image_path
             
         except Exception as e:
-            self.logs_text.append(f"Error displaying image: {str(e)}")
+            self.logs_text.append(f"Ошибка отображения изображения: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
-            self.image_label.setText("Generated Image Preview\n\nError loading image")
+            self.image_label.setText("Предварительный просмотр сгенерированного изображения\n\nОшибка загрузки изображения")
+
+    def _run_xai_for_image(self, image_path: str, class_name: str):
+        """Запуск лёгкого XAI-оверлея для конкретного изображения без открытия окна."""
+        try:
+            # Не открываем изображение, просто сохраняем оверлей рядом в xai_results
+            from xai import run_xai_analysis as _xai_func
+        except Exception:
+            # Пытаемся путь-импорт
+            try:
+                import importlib.util, os as _os
+                p = _os.path.join(os.getcwd(), 'xai', 'xai_integration.py')
+                if not os.path.exists(p):
+                    p = _os.path.join(os.getcwd(), 'XAI', 'xai_integration.py')
+                spec = importlib.util.spec_from_file_location('xai_xai_integration_dynamic', p)
+                mod = importlib.util.module_from_spec(spec)
+                assert spec and spec.loader
+                spec.loader.exec_module(mod)
+                _xai_func = getattr(mod, 'run_xai_analysis', None)
+            except Exception as e:
+                self.logs_text.append(f"Импорт XAI hook не удался: {str(e)}")
+                return
+        try:
+            device = getattr(self.generator, 'device', None)
+            classifier_path = os.path.join(os.getcwd(), 'checkpoints', 'classifier.pth')
+            save_dir = os.path.join(os.getcwd(), 'xai_results')
+            _, saved_path = _xai_func(
+                image_path,
+                device=device,
+                classifier_path=classifier_path,
+                save_dir=save_dir
+            )
+            self.logs_text.append(f"XAI (периодический) сохранен: {saved_path}")
+        except Exception as e:
+            self.logs_text.append(f"Ошибка XAI hook: {str(e)}")
+    
+    def on_xai_toggle(self, checked):
+        """Обработчик переключения XAI Mode"""
+        self.xai_mode = bool(checked)
+        self.logs_text.append(f"XAI Mode: {'ON' if self.xai_mode else 'OFF'}")
+        # Перекрашиваем кнопку при включении
+        try:
+            if self.xai_mode:
+                # Светло-серый фон в ON
+                self.xai_mode_btn.setStyleSheet("QPushButton { background-color: #E0E0E0; border: 2px solid #A0A0A0; font-weight: bold; }")
+            else:
+                # Сброс к стилю по умолчанию
+                self.xai_mode_btn.setStyleSheet("")
+        except Exception:
+            pass
+        # Перерисовываем текущее изображение при смене режима, если оно уже показано
+        try:
+            if self.current_image_path and os.path.exists(self.current_image_path):
+                self.display_image(self.current_image_path)
+        except Exception as e:
+            self.logs_text.append(f"Ошибка обновления изображения: {str(e)}")
+        
+        # Обновляем частоту шагов для XAI пайплайна через переменную окружения
+        try:
+            os.environ["XAI_SAVE_EVERY_N"] = str(self.xai_step_spin.value())
+            self.logs_text.append(f"XAI n_steps set to: {self.xai_step_spin.value()}")
+        except Exception:
+            pass
             
     def open_xai_results_directory(self):
         """Открывает папку с результатами XAI"""
@@ -723,10 +968,10 @@ class SyntheticDataGenerator(QMainWindow):
                 
             # Открываем папку в проводнике Windows
             os.startfile(xai_dir)
-            self.logs_text.append(f"Opened XAI results directory: {xai_dir}")
+            self.logs_text.append(f"Открыта папка результатов XAI: {xai_dir}")
             
         except Exception as e:
-            self.logs_text.append(f"Error opening XAI results directory: {str(e)}")
+            self.logs_text.append(f"Ошибка открытия папки результатов XAI: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -736,12 +981,12 @@ class SyntheticDataGenerator(QMainWindow):
             if hasattr(self, 'selected_models_dir') and self.selected_models_dir:
                 # Открываем папку в проводнике Windows
                 os.startfile(self.selected_models_dir)
-                self.logs_text.append(f"Opened checkpoints directory: {self.selected_models_dir}")
+                self.logs_text.append(f"Открыта папка чекпоинтов: {self.selected_models_dir}")
             else:
                 QMessageBox.information(self, "Информация", "Сначала выберите папку с моделями!")
                 
         except Exception as e:
-            self.logs_text.append(f"Error opening checkpoints directory: {str(e)}")
+            self.logs_text.append(f"Ошибка открытия папки чекпоинтов: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -749,10 +994,10 @@ class SyntheticDataGenerator(QMainWindow):
         """Обработчик клика по папке класса"""
         try:
             class_name = item.text()
-            self.logs_text.append(f"Selected class folder: {class_name}")
+            self.logs_text.append(f"Выбрана папка класса: {class_name}")
             self.load_images_from_class(class_name)
         except Exception as e:
-            self.logs_text.append(f"Error selecting class folder: {str(e)}")
+            self.logs_text.append(f"Ошибка выбора папки класса: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -764,11 +1009,11 @@ class SyntheticDataGenerator(QMainWindow):
             
             if image_path and os.path.exists(image_path):
                 self.display_image(image_path)
-                self.logs_text.append(f"Displaying: {filename}")
+                self.logs_text.append(f"Отображается: {filename}")
             else:
-                self.logs_text.append("Error: Image file not found")
+                self.logs_text.append("Ошибка: Файл изображения не найден")
         except Exception as e:
-            self.logs_text.append(f"Error selecting image file: {str(e)}")
+            self.logs_text.append(f"Ошибка выбора файла изображения: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -805,10 +1050,10 @@ class SyntheticDataGenerator(QMainWindow):
                 item.setData(Qt.UserRole, image_path)  # Сохраняем полный путь
                 self.images_list.addItem(item)
                 
-            self.logs_text.append(f"Loaded {len(found_images)} images from class '{class_name}'")
+            self.logs_text.append(f"Загружено {len(found_images)} изображений из класса '{class_name}'")
             
         except Exception as e:
-            self.logs_text.append(f"Error loading images from class: {str(e)}")
+            self.logs_text.append(f"Ошибка загрузки изображений из класса: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -831,10 +1076,10 @@ class SyntheticDataGenerator(QMainWindow):
                     if os.path.isdir(item_path):
                         self.class_folders_list.addItem(item)
                         
-                self.logs_text.append(f"Found {self.class_folders_list.count()} class folders")
+                self.logs_text.append(f"Найдено {self.class_folders_list.count()} папок классов")
             
         except Exception as e:
-            self.logs_text.append(f"Error updating file lists: {str(e)}")
+            self.logs_text.append(f"Ошибка обновления списков файлов: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -844,12 +1089,12 @@ class SyntheticDataGenerator(QMainWindow):
             if hasattr(self, 'current_image_path') and self.current_image_path:
                 # Открываем изображение в стандартном приложении Windows
                 os.startfile(self.current_image_path)
-                self.logs_text.append(f"Opened image: {self.current_image_path}")
+                self.logs_text.append(f"Открыто изображение: {self.current_image_path}")
             else:
                 QMessageBox.information(self, "Информация", "Нет изображения для просмотра!")
                 
         except Exception as e:
-            self.logs_text.append(f"Error opening image: {str(e)}")
+            self.logs_text.append(f"Ошибка открытия изображения: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -870,7 +1115,7 @@ class SyntheticDataGenerator(QMainWindow):
                 
                 # Обновляем UI
                 self.model_path_label.setText(f"Model Path: {directory}")
-                self.logs_text.append(f"Model directory selected: {directory}")
+                self.logs_text.append(f"Выбрана папка с моделями: {directory}")
                 
                 # Проверяем доступные модели
                 self.check_available_models()
@@ -879,7 +1124,7 @@ class SyntheticDataGenerator(QMainWindow):
                 if hasattr(self, 'selected_output_dir') and self.selected_output_dir:
                     self.show_first_generated_image()
                     
-                self.logs_text.append(f"Models directory selected: {directory}")
+                self.logs_text.append(f"Выбрана папка с моделями: {directory}")
                 
             else:
                 QMessageBox.warning(
@@ -914,7 +1159,7 @@ class SyntheticDataGenerator(QMainWindow):
             if hasattr(self, 'selected_output_dir') and self.selected_output_dir:
                 self.show_first_generated_image()
                 
-            self.logs_text.append(f"Output directory selected: {directory}")
+            self.logs_text.append(f"Выбрана папка для вывода: {directory}")
             
     def check_available_models(self):
         """Проверяет доступные модели в выбранной папке"""
@@ -938,11 +1183,11 @@ class SyntheticDataGenerator(QMainWindow):
             
             # Обновляем информацию
             self.available_models_label.setText(f"Available Models: {len(self.available_classes)}")
-            self.logs_text.append(f"Found {len(self.available_classes)} available models")
+            self.logs_text.append(f"Найдено {len(self.available_classes)} доступных моделей")
 
             
         except Exception as e:
-            self.logs_text.append(f"ERROR: Model check failed: {str(e)}")
+            self.logs_text.append(f"ОШИБКА: Проверка модели не удалась: {str(e)}")
             import traceback
             self.logs_text.append(f"Traceback: {traceback.format_exc()}")
             
@@ -957,7 +1202,7 @@ class SyntheticDataGenerator(QMainWindow):
                     child.setText(0, f"generated_images ({self.selected_output_dir})")
                     break
                     
-            self.logs_text.append(f"Project tree updated for: {self.selected_output_dir}")
+            self.logs_text.append(f"Дерево проекта обновлено для: {self.selected_output_dir}")
                     
     def on_device_changed(self, device_text):
         """Обработчик изменения устройства"""
@@ -983,8 +1228,8 @@ class SyntheticDataGenerator(QMainWindow):
                 if hasattr(self.generator, 'model_manager'):
                     self.generator.model_manager.cleanup()
                     
-                self._log_message(f"Device changed to: {device_name}")
-                self._log_message(f"Models will be reloaded on next generation")
+                self._log_message(f"Устройство изменено на: {device_name}")
+                self._log_message(f"Модели будут перезагружены при следующей генерации")
                 
                 # Обновляем UI
                 self.device_info_label.setText(f"Device: {device_name}")
@@ -1000,7 +1245,7 @@ class SyntheticDataGenerator(QMainWindow):
                 
         except Exception as e:
             self._log_message(f"Error changing device: {str(e)}")
-            QMessageBox.warning(self, "Error", f"Не удалось изменить устройство: {str(e)}")
+            QMessageBox.warning(self, "Ошибка", f"Не удалось изменить устройство: {str(e)}")
             import traceback
             self._log_message(f"Traceback: {traceback.format_exc()}")
             
@@ -1036,16 +1281,29 @@ class SyntheticDataGenerator(QMainWindow):
         
     def on_stop_clicked(self):
         """Обработчик нажатия кнопки Stop"""
-        if self.generation_worker and self.generation_worker.isRunning():
-            self.generation_worker.terminate()
-            self.generation_worker.wait()
-            
-        if self.generator:
-            self.generator.stop_generation()
-            
-        self.is_generating = False
-        self.update_ui_state()
-        self.logs_text.append("Generation stopped")
+        try:
+            # Останавливаем генерацию мягко
+            if self.generator:
+                self.generator.stop_generation()
+            # Ждём воркер, если он запущен
+            if self.generation_worker and self.generation_worker.isRunning():
+                self.generation_worker.wait(200)
+                # Если не остановился, прерываем
+                if self.generation_worker.isRunning():
+                    self.generation_worker.terminate()
+                    self.generation_worker.wait()
+            # Останавливаем XAI пайплайн, если идёт
+            if hasattr(self, 'xai_worker') and self.xai_worker and self.xai_worker.isRunning():
+                try:
+                    self.xai_worker.stop()
+                    self.xai_worker.wait(500)
+                except Exception:
+                    pass
+            self.is_generating = False
+            self.update_ui_state()
+            self.logs_text.append("Генерация остановлена")
+        except Exception as e:
+            self.logs_text.append(f"Ошибка остановки: {str(e)}")
         
 
         
@@ -1080,7 +1338,18 @@ class SyntheticDataGenerator(QMainWindow):
         # Запускаем воркер
         self.generation_worker.start()
         
-        self.logs_text.append(f"Starting generation: {len(class_configs)} classes")
+        self.logs_text.append(f"Начинаем генерацию: {len(class_configs)} классов")
+
+        # Если включён XAI Mode — параллельно запускаем полный XAI пайплайн
+        if getattr(self, 'xai_mode', False):
+            try:
+                self.xai_worker = XAIWorker(working_dir=os.getcwd())
+                self.xai_worker.log_updated.connect(self.logs_text.append)
+                self.xai_worker.finished.connect(self.on_xai_finished)
+                self.logs_text.append("XAI: параллельный анализ запущен")
+                self.xai_worker.start()
+            except Exception as e:
+                self.logs_text.append(f"XAI: не удалось запустить: {str(e)}")
 
         
     def update_progress(self, current, total, message):
@@ -1100,7 +1369,7 @@ class SyntheticDataGenerator(QMainWindow):
         self.update_ui_state()
         
         if "error" in results:
-            self.logs_text.append(f"ERROR: Generation failed: {results['error']}")
+            self.logs_text.append(f"ОШИБКА: Генерация не удалась: {results['error']}")
             QMessageBox.critical(self, "Ошибка", f"Генерация завершена с ошибкой: {results['error']}")
         else:
             self.logs_text.append(f"🎉 Генерация завершена успешно!")
@@ -1125,7 +1394,110 @@ class SyntheticDataGenerator(QMainWindow):
         if hasattr(self, 'selected_output_dir') and self.selected_output_dir:
             self.show_first_generated_image()
             
-        self.logs_text.append(f"Generation finished - updating file lists")
+        self.logs_text.append(f"Генерация завершена - обновляем списки файлов")
+        self.update_xai_lists()
+
+    def on_xai_finished(self, success: bool):
+        try:
+            if success:
+                self.logs_text.append("XAI: результаты сохранены (см. xai_results и логи выше)")
+                self.update_xai_lists()
+            else:
+                self.logs_text.append("XAI: завершен с ошибками; см. логи выше")
+        except Exception:
+            pass
+
+    def update_xai_lists(self):
+        try:
+            base = os.path.join(os.getcwd(), 'xai_results')
+            self.xai_runs_list.clear()
+            self.xai_files_list.clear()
+            if not os.path.exists(base):
+                os.makedirs(base, exist_ok=True)
+            runs = []
+            for name in os.listdir(base):
+                p = os.path.join(base, name)
+                if os.path.isdir(p):
+                    runs.append((name, os.path.getmtime(p)))
+            runs.sort(key=lambda x: x[1], reverse=True)
+            for name, _ in runs:
+                self.xai_runs_list.addItem(name)
+            if runs:
+                self.xai_runs_list.setCurrentRow(0)
+                self.on_xai_run_clicked(self.xai_runs_list.item(0))
+            self.logs_text.append(f"XAI: найдено {len(runs)} запусков анализа")
+        except Exception as e:
+            self.logs_text.append(f"XAI: ошибка обновления списка: {str(e)}")
+
+    def on_xai_run_clicked(self, item):
+        try:
+            base = os.path.join(os.getcwd(), 'xai_results')
+            run_dir = os.path.join(base, item.text())
+            self.xai_files_list.clear()
+            if os.path.isdir(run_dir):
+                files = sorted(os.listdir(run_dir))
+                for f in files:
+                    self.xai_files_list.addItem(f)
+        except Exception as e:
+            self.logs_text.append(f"XAI: ошибка клика по запуску: {str(e)}")
+
+    def on_xai_file_clicked(self, item):
+        try:
+            base = os.path.join(os.getcwd(), 'xai_results')
+            run_item = self.xai_runs_list.currentItem()
+            if not run_item:
+                return
+            run_dir = os.path.join(base, run_item.text())
+            file_name = item.text()
+            path = os.path.join(run_dir, file_name)
+            lower = file_name.lower()
+            if any(lower.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.bmp']):
+                self.display_image(path)
+                self.logs_text.append(f"XAI изображение отображено: {file_name}")
+            elif lower.endswith('.json'):
+                import json
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                import json as _json
+                pretty = _json.dumps(data, indent=2, ensure_ascii=False)
+                self.show_text_dialog(f"JSON: {file_name}", pretty)
+            elif lower.endswith('.pkl') or lower.endswith('.pickle'):
+                import pickle
+                with open(path, 'rb') as f:
+                    obj = pickle.load(f)
+                summary = self._summarize_pickle(obj)
+                self.show_text_dialog(f"PKL: {file_name}", summary)
+            else:
+                self.logs_text.append(f"XAI: неподдерживаемый тип файла: {file_name}")
+        except Exception as e:
+            self.logs_text.append(f"XAI: ошибка открытия файла: {str(e)}")
+
+    def _summarize_pickle(self, obj) -> str:
+        try:
+            if isinstance(obj, dict):
+                keys = list(obj.keys())
+                return f"Type: dict\nKeys ({len(keys)}):\n- " + "\n- ".join(map(str, keys))
+            return f"Type: {type(obj)}\nStr: {str(obj)[:2000]}"
+        except Exception as e:
+            return f"PKL summary error: {str(e)}"
+
+    def show_text_dialog(self, title: str, content: str):
+        try:
+            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
+            dlg = QDialog(self)
+            dlg.setWindowTitle(title)
+            layout = QVBoxLayout(dlg)
+            txt = QTextEdit()
+            txt.setReadOnly(True)
+            txt.setText(content)
+            btn = QPushButton("Закрыть")
+            btn.clicked.connect(dlg.accept)
+            layout.addWidget(txt)
+            layout.addWidget(btn)
+            dlg.resize(700, 500)
+            dlg.exec_()
+        except Exception as e:
+            self.logs_text.append(f"Dialog error: {str(e)}")
         
     def update_ui_state(self):
         """Обновляет состояние UI"""
@@ -1184,7 +1556,7 @@ def main():
     window = SyntheticDataGenerator()
     window.show()
     
-    print("Application started successfully")
+    print("Приложение успешно запущено")
     
     # Запускаем приложение
     sys.exit(app.exec_())

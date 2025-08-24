@@ -152,12 +152,21 @@ class DiffusionGenerator:
                 self.logger.info("Применяю постобработку цветов")
                 image = self.postprocessor.postprocess_image(image, class_name)
             
-            # Сохраняем изображение
-            pil_image = Image.fromarray(image)
-            pil_image.save(output_path)
+            # Сохраняем изображение (принудительно JPEG)
+            pil_image = Image.fromarray(image).convert('RGB')
+            save_path = output_path
+            try:
+                # Меняем расширение, если нужно, на .jpg
+                root, ext = os.path.splitext(output_path)
+                if ext.lower() not in ['.jpg', '.jpeg']:
+                    save_path = root + '.jpg'
+                pil_image.save(save_path, format='JPEG', quality=95)
+            except Exception:
+                # Фолбэк на стандартное сохранение
+                pil_image.save(save_path)
             
-            self.logger.info(f"Изображение сохранено: {output_path}")
-            return output_path
+            self.logger.info(f"Изображение сохранено: {save_path}")
+            return save_path
             
         except Exception as e:
             self.logger.error(f"Ошибка генерации изображения для класса {class_name}: {e}")
@@ -230,10 +239,13 @@ class DiffusionGenerator:
                     if postprocess:
                         image = self.postprocessor.postprocess_image(image, class_name)
                     
-                    # Сохраняем изображение
+                    # Сохраняем изображение (JPEG)
                     output_path = os.path.join(output_dir, f"{class_name}_{image_index:04d}.jpg")
-                    pil_image = Image.fromarray(image)
-                    pil_image.save(output_path)
+                    pil_image = Image.fromarray(image).convert('RGB')
+                    try:
+                        pil_image.save(output_path, format='JPEG', quality=95)
+                    except Exception:
+                        pil_image.save(output_path)
                     
                     generated_paths.append(output_path)
                 

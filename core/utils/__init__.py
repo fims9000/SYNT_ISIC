@@ -1,5 +1,5 @@
 """
-Utility functions for ISIC Generator
+Утилиты для ISIC Generator
 Утилиты для работы с путями, логированием и общими функциями
 """
 

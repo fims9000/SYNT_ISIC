@@ -1,5 +1,5 @@
 """
-Image generation for ISIC Generator
+Генерация изображений для ISIC Generator
 Генерация изображений с использованием обученных моделей
 """
 
@@ -45,6 +45,13 @@ class ImageGenerator:
         self.is_generating = False
         self.stop_requested = False
         
+        # XAI hook (необязательный): вызывается для каждого N-го изображения
+        self.xai_hook: Optional[Callable[[str, str], None]] = None
+        self.xai_every_n: int = 10
+
+        # Seed управления генерацией (для воспроизводимости и синхронизации с XAI)
+        self.base_seed: Optional[int] = None
+        
         # Загруженные цветовые статистики
         self.color_statistics: Dict[str, Dict[str, Any]] = {}
         
@@ -56,6 +63,9 @@ class ImageGenerator:
         
         # Загружаем цветовые статистики
         self._load_color_statistics()
+
+        # Кол-во шагов денойзинга (синхронизировано с XAI по умолчанию)
+        self.inference_steps: int = 50
         
         # Предзагружаем все доступные модели (после полной инициализации)
         try:
@@ -74,6 +84,19 @@ class ImageGenerator:
     def set_log_callback(self, callback: Callable[[str], None]):
         """Устанавливает callback для логирования"""
         self.log_callback = callback
+    
+    def set_xai_hook(self, callback: Optional[Callable[[str, str], None]], every_n: int = 10):
+        """Включает/отключает XAI-хук.
+        callback(image_path, class_name) будет вызываться для каждого 1,11,21,... изображения.
+        """
+        self.xai_hook = callback
+        self.xai_every_n = max(1, int(every_n))
+
+    def set_generation_seed(self, seed: Optional[int]):
+        """Устанавливает базовый seed для генерации.
+        Если None — используется недетерминированный генератор.
+        """
+        self.base_seed = int(seed) if seed is not None else None
         
     def _update_progress(self, current: int, total: int, message: str):
         """Обновляет прогресс"""
@@ -133,7 +156,7 @@ class ImageGenerator:
                 
             # Проверяем, что model_manager доступен
             if not hasattr(self, 'model_manager') or not self.model_manager:
-                print("Model manager недоступен, пропускаем предзагрузку")
+                print("Менеджер моделей недоступен, пропускаем предзагрузку")
                 return
                 
             available_classes = self.get_available_classes()
@@ -264,11 +287,12 @@ class ImageGenerator:
         """Создает планировщик с правильными параметрами"""
         scheduler = DDPMScheduler(
             num_train_timesteps=1000,
-            beta_start=0.0001,
-            beta_end=0.02,
-            beta_schedule="linear"
+            beta_schedule="squaredcos_cap_v2",
+            prediction_type="epsilon"
         )
-        scheduler.set_timesteps(1000)
+        # Используем число шагов, синхронизированное с XAI (по умолчанию 50)
+        steps = max(1, min(1000, int(self.inference_steps)))
+        scheduler.set_timesteps(steps)
         return scheduler
         
     def _cleanup_memory(self):
@@ -287,9 +311,9 @@ class ImageGenerator:
             # Проверяем, что model_manager доступен
             if not hasattr(self, 'model_manager') or not self.model_manager:
                 if hasattr(self, '_log_message'):
-                    self._log_message("Model manager недоступен", "error")
+                    self._log_message("Менеджер моделей недоступен", "error")
                 else:
-                    print("Model manager недоступен")
+                    print("Менеджер моделей недоступен")
                 return False
                 
             # Очищаем память перед генерацией
@@ -311,6 +335,16 @@ class ImageGenerator:
             
             # Генерируем изображение
             with torch.no_grad():
+                # Устанавливаем seed для воспроизводимости
+                if self.base_seed is not None:
+                    # Генерируем последовательный seed на основе базового и порядкового номера
+                    # Порядковый номер определяется текущим временем модификации CSV или переменной счетчика ниже
+                    local_seed = int(self.base_seed)
+                    torch.manual_seed(local_seed)
+                    np.random.seed(local_seed)
+                    if torch.cuda.is_available():
+                        torch.cuda.manual_seed(local_seed)
+
                 # Создаем случайный шум с правильным размером
                 noise = torch.randn(1, 3, 128, 128, device=self.device)
                 
@@ -372,15 +406,24 @@ class ImageGenerator:
             
             # Получаем статистики RGB
             if "rgb" in stats and "mean" in stats["rgb"]:
-                target_mean = np.array(stats["rgb"]["mean"])
-                target_std = np.array(stats["rgb"]["std"])
+                target_mean = np.array(stats["rgb"].get("mean", [128, 128, 128]), dtype=np.float32)
+                target_std = np.array(stats["rgb"].get("std", [50, 50, 50]), dtype=np.float32)
                 
-                # Нормализуем текущее изображение
-                current_mean = np.mean(img_array, axis=(0, 1))
-                current_std = np.std(img_array, axis=(0, 1))
+                # Нынешние статистики
+                current_mean = np.mean(img_array, axis=(0, 1)).astype(np.float32)
+                current_std = np.std(img_array, axis=(0, 1)).astype(np.float32)
                 
-                # Применяем нормализацию
-                img_array = ((img_array - current_mean) / current_std) * target_std + target_mean
+                # Защита от нулевой дисперсии
+                eps = 1e-6
+                safe_std = np.maximum(current_std, eps)
+                
+                # Ограничиваем силу корректировки (клип масштаба и смешивание)
+                scale = np.clip(target_std / safe_std, 0.6, 1.4)
+                shifted = (img_array.astype(np.float32) - current_mean) * scale + target_mean
+                
+                # Плавное смешивание с исходником, чтобы избежать артефактов
+                alpha = 0.35  # доля корректировки (умеренная)
+                img_array = alpha * shifted + (1.0 - alpha) * img_array.astype(np.float32)
                 
                 # Ограничиваем значения
                 img_array = np.clip(img_array, 0, 255).astype(np.uint8)
@@ -409,10 +452,10 @@ class ImageGenerator:
             # Проверяем, что model_manager доступен
             if not hasattr(self, 'model_manager') or not self.model_manager:
                 if hasattr(self, '_log_message'):
-                    self._log_message("Model manager недоступен", "error")
+                    self._log_message("Менеджер моделей недоступен", "error")
                 else:
-                    print("Model manager недоступен")
-                return {"error": "Model manager недоступен"}
+                    print("Менеджер моделей недоступен")
+                return {"error": "Менеджер моделей недоступен"}
                 
             self.is_generating = True
             self.stop_requested = False
@@ -439,9 +482,9 @@ class ImageGenerator:
                     break
                     
                 if hasattr(self, '_log_message'):
-                    self._log_message(f"Generating {count} images for class {class_name}")
+                    self._log_message(f"Генерируем {count} изображений для класса {class_name}")
                 else:
-                    print(f"Generating {count} images for class {class_name}")
+                    print(f"Генерируем {count} изображений для класса {class_name}")
                 
                 # Создаем папку для класса
                 class_dir = output_path / class_name
@@ -474,7 +517,7 @@ class ImageGenerator:
                         
                         # Обновляем прогресс
                         self._update_progress(generated_count, total_images, 
-                                           f"Generated {generated_count}/{total_images}")
+                                           f"Сгенерировано {generated_count}/{total_images}")
                         
                         # Очищаем память после КАЖДОГО изображения
                         self._cleanup_memory()
@@ -483,22 +526,30 @@ class ImageGenerator:
                         if torch.cuda.is_available():
                             memory_used = torch.cuda.memory_allocated() / 1024**3  # GB
                             if hasattr(self, '_log_message'):
-                                self._log_message(f"Memory after image {generated_count}: {memory_used:.3f}GB")
+                                self._log_message(f"Память после изображения {generated_count}: {memory_used:.3f}ГБ")
                             else:
-                                print(f"Memory after image {generated_count}: {memory_used:.3f}GB")
+                                print(f"Память после изображения {generated_count}: {memory_used:.3f}ГБ")
+                        
+                        # Запускаем XAI для каждого 1,11,21,... изображения
+                        try:
+                            if self.xai_hook and ((generated_count - 1) % self.xai_every_n == 0):
+                                self.xai_hook(str(file_path), class_name)
+                        except Exception as _xai_err:
+                            # Не прерываем генерацию
+                            self._log_message(f"Ошибка XAI hook: {_xai_err}", "warning")
                     
             # Финальное обновление
             if self.stop_requested:
                 if hasattr(self, '_log_message'):
-                    self._log_message("Generation stopped by user")
+                    self._log_message("Генерация остановлена пользователем")
                 else:
-                    print("Generation stopped by user")
+                    print("Генерация остановлена пользователем")
                 result = {"total_generated": generated_count, "stopped": True}
             else:
                 if hasattr(self, '_log_message'):
-                    self._log_message(f"Generation completed. Generated {generated_count} images")
+                    self._log_message(f"Генерация завершена. Сгенерировано {generated_count} изображений")
                 else:
-                    print(f"Generation completed. Generated {generated_count} images")
+                    print(f"Генерация завершена. Сгенерировано {generated_count} изображений")
                 result = {"total_generated": generated_count, "stopped": False}
                 
             self.is_generating = False
@@ -506,9 +557,9 @@ class ImageGenerator:
             
         except Exception as e:
             if hasattr(self, '_log_message'):
-                self._log_message(f"Critical generation error: {e}", "error")
+                self._log_message(f"Критическая ошибка генерации: {e}", "error")
             else:
-                print(f"Critical generation error: {e}")
+                print(f"Критическая ошибка генерации: {e}")
             self.is_generating = False
             return {"error": str(e)}
             
@@ -522,15 +573,15 @@ class ImageGenerator:
                 writer.writeheader()
                 
             if hasattr(self, '_log_message'):
-                self._log_message(f"CSV metadata file created: {csv_path}")
+                self._log_message(f"Создан CSV файл метаданных: {csv_path}")
             else:
-                print(f"CSV metadata file created: {csv_path}")
+                print(f"Создан CSV файл метаданных: {csv_path}")
                 
         except Exception as e:
             if hasattr(self, '_log_message'):
-                self._log_message(f"Error creating CSV file: {e}", "error")
+                self._log_message(f"Ошибка создания CSV файла: {e}", "error")
             else:
-                print(f"Error creating CSV file: {e}")
+                print(f"Ошибка создания CSV файла: {e}")
             
     def _append_to_csv(self, csv_path: Path, data: Dict[str, str]):
         """Добавляет запись в CSV файл"""
@@ -541,17 +592,17 @@ class ImageGenerator:
                 
         except Exception as e:
             if hasattr(self, '_log_message'):
-                self._log_message(f"Error writing to CSV: {e}", "error")
+                self._log_message(f"Ошибка записи в CSV: {e}", "error")
             else:
-                print(f"Error writing to CSV: {e}")
+                print(f"Ошибка записи в CSV: {e}")
             
     def stop_generation(self):
         """Останавливает генерацию"""
         self.stop_requested = True
         if hasattr(self, '_log_message'):
-            self._log_message("Generation stop requested")
+            self._log_message("Запрошена остановка генерации")
         else:
-            print("Generation stop requested")
+            print("Запрошена остановка генерации")
         
     def get_generation_status(self) -> Dict[str, Any]:
         """Возвращает статус генерации"""
@@ -589,11 +640,11 @@ class ImageGenerator:
                 self.cache_manager.cleanup_temp_files()
             self._cleanup_memory()
             if hasattr(self, '_log_message'):
-                self._log_message("ImageGenerator cleaned up")
+                self._log_message("ImageGenerator очищен")
             else:
-                print("ImageGenerator cleaned up")
+                print("ImageGenerator очищен")
         except Exception as e:
             if hasattr(self, '_log_message'):
-                self._log_message(f"Error cleaning up ImageGenerator: {e}", "error")
+                self._log_message(f"Ошибка очистки ImageGenerator: {e}", "error")
             else:
-                print(f"Error cleaning up ImageGenerator: {e}")
+                print(f"Ошибка очистки ImageGenerator: {e}")

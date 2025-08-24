@@ -13,6 +13,7 @@ core/logs/
 
 # Сгенерированные изображения
 generated_images/
+xai_results/
 
 # Модели и веса (могут быть большими)
 *.pth
@@ -85,4 +86,5 @@ dmypy.json
 # Добавляем конкретные большие файлы, если они есть
 
 #сторонние директории
-classification_and_segmentation
+classification_and_segmentation/
+models/

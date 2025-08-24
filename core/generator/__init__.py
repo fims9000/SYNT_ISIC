@@ -1,5 +1,5 @@
 """
-Image generation for ISIC Generator
+Генерация изображений для ISIC Generator
 Генерация изображений с использованием обученных моделей
 """
 

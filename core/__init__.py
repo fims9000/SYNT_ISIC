@@ -1,5 +1,5 @@
 """
-Core package for ISIC Synthetic Data Generator
+Основной пакет для ISIC Synthetic Data Generator
 Содержит все основные компоненты для генерации изображений
 """
 

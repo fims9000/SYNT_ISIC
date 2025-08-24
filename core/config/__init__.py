@@ -1,5 +1,5 @@
 """
-Configuration management for ISIC Generator
+Управление конфигурацией для ISIC Generator
 Управление конфигурацией и путями
 """
 
