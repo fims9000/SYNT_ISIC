@@ -302,7 +302,7 @@ class ImageGenerator:
             torch.cuda.synchronize()
             
     def generate_single_image(self, class_name: str, output_path: str, 
-                            postprocess: bool = True) -> bool:
+                            postprocess: bool = True, seed: Optional[int] = None) -> bool:
         """Генерирует одно изображение для указанного класса"""
         try:
             if self.stop_requested:
@@ -331,15 +331,30 @@ class ImageGenerator:
                     
             # Получаем модель и планировщик
             model = self.model_manager.loaded_models[class_name]
+            # Гарантируем, что модель и тензоры на одном устройстве
+            if hasattr(model, 'device'):
+                try:
+                    current_device_str = str(getattr(model, 'device'))
+                except Exception:
+                    current_device_str = None
+            else:
+                current_device_str = None
+            target_device_str = str(self.device)
+            if current_device_str != target_device_str:
+                try:
+                    model = model.to(self.device)
+                    self.model_manager.loaded_models[class_name] = model
+                    self._log_message(f"Модель {class_name} перенесена на устройство {self.device}")
+                except Exception as e_move:
+                    self._log_message(f"Не удалось перенести модель {class_name} на {self.device}: {e_move}", "error")
+                    return False
             scheduler = self._create_scheduler()
             
             # Генерируем изображение
             with torch.no_grad():
-                # Устанавливаем seed для воспроизводимости
-                if self.base_seed is not None:
-                    # Генерируем последовательный seed на основе базового и порядкового номера
-                    # Порядковый номер определяется текущим временем модификации CSV или переменной счетчика ниже
-                    local_seed = int(self.base_seed)
+                # Устанавливаем seed (если передан)
+                if seed is not None:
+                    local_seed = int(seed)
                     torch.manual_seed(local_seed)
                     np.random.seed(local_seed)
                     if torch.cuda.is_available():
@@ -476,6 +491,15 @@ class ImageGenerator:
             else:
                 print(f"Начинаем генерацию {total_images} изображений")
             
+            # Подготавливаем детерминированные оффсеты для классов (если задан базовый seed)
+            import hashlib
+            class_seed_offsets: Dict[str, int] = {}
+            if self.base_seed is not None:
+                for class_name, _ in class_configs:
+                    h = hashlib.md5(class_name.encode('utf-8')).hexdigest()
+                    # Берем 31-битный оффсет, чтобы поместиться в диапазоне torch.manual_seed
+                    class_seed_offsets[class_name] = (int(h[:8], 16) & 0x7fffffff)
+
             # Генерируем изображения для каждого класса
             for class_name, count in class_configs:
                 if self.stop_requested:
@@ -495,20 +519,27 @@ class ImageGenerator:
                     if self.stop_requested:
                         break
                         
-                    # Генерируем имя файла в формате ISIC
-                    isic_number = self.path_manager.get_next_isic_number(str(output_path))
+                    # Генерируем имя файла в формате ISIC (нумерация внутри папки класса)
+                    isic_number = self.path_manager.get_next_isic_number(str(class_dir))
                     filename = self.path_manager.get_isic_filename(isic_number)
-                    file_path = class_dir / f"{filename}.png"
+                    file_path = class_dir / filename
                     
                     # Генерируем изображение
-                    success = self.generate_single_image(class_name, str(file_path), postprocess)
+                    # Рассчитываем индивидуальный seed для каждого изображения класса
+                    seed_value: Optional[int] = None
+                    if self.base_seed is not None:
+                        class_offset = class_seed_offsets.get(class_name, 0)
+                        # seed = base + class_offset + индекс внутри класса
+                        seed_value = (int(self.base_seed) + class_offset + i) & 0x7fffffff
+
+                    success = self.generate_single_image(class_name, str(file_path), postprocess, seed=seed_value)
                     
                     if success:
                         generated_count += 1
                         
                         # Добавляем в CSV
                         self._append_to_csv(csv_path, {
-                            "filename": f"{filename}.png",
+                            "filename": filename,
                             "class": class_name,
                             "isic_number": isic_number,
                             "source": "synthetic",

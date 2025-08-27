@@ -105,11 +105,25 @@ class ModelManager:
                 self.logger.log_error(f"Файл модели не найден: {model_path}")
                 return False
                 
-            # Проверяем кэш
-            cached_model = self.cache_manager.get_cached_model(str(model_path))
-            if cached_model and not force_reload:
-                self.logger.log_info(f"Загружаем модель {class_name} из кэша")
-                self.loaded_models[class_name] = cached_model
+            # Проверяем кэш по имени класса и при наличии грузим веса из кэш-файла
+            cached_path = self.cache_manager.get_cached_model(class_name)
+            if cached_path and not force_reload:
+                self.logger.log_info(f"Загружаем модель {class_name} из кэша: {cached_path}")
+                model = self._create_model_architecture()
+                checkpoint = torch.load(cached_path, map_location=self.device)
+                model.load_state_dict(checkpoint)
+                model = model.to(self.device)
+                model.eval()
+                self.loaded_models[class_name] = model
+                # Инициализируем планировщик
+                scheduler = self.create_scheduler(class_name)
+                self.loaded_schedulers[class_name] = scheduler
+                # Метаданные
+                self.model_metadata[class_name] = {
+                    "model_path": str(cached_path),
+                    "loaded_at": torch.cuda.Event() if torch.cuda.is_available() else None,
+                    "device": str(self.device)
+                }
                 return True
                 
             # Загружаем модель
@@ -129,8 +143,11 @@ class ModelManager:
             # Сохраняем модель
             self.loaded_models[class_name] = model
             
-            # Кэшируем модель
-            self.cache_manager.cache_model(str(model_path), class_name)
+            # Кэшируем модельный файл-источник (копирует в кэш при отсутствии)
+            try:
+                self.cache_manager.cache_model(str(model_path), class_name)
+            except Exception as e_cache:
+                self.logger.log_warning(f"Не удалось закэшировать модель {class_name}: {e_cache}")
             
             # Создаем планировщик
             scheduler = self.create_scheduler(class_name)

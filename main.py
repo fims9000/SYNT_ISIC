@@ -1223,10 +1223,14 @@ class SyntheticDataGenerator(QMainWindow):
                     
                 # Обновляем устройство в генераторе
                 self.generator.device = new_device
-                
-                # Очищаем загруженные модели для перезагрузки на новом устройстве
-                if hasattr(self.generator, 'model_manager'):
-                    self.generator.model_manager.cleanup()
+
+                # Переносим уже загруженные модели на новое устройство (без обязательной выгрузки)
+                if hasattr(self.generator, 'model_manager') and self.generator.model_manager:
+                    try:
+                        self.generator.model_manager.change_device(str(new_device))
+                    except Exception:
+                        # Фолбэк: выгружаем модели, они перезагрузятся при следующей генерации
+                        self.generator.model_manager.cleanup()
                     
                 self._log_message(f"Устройство изменено на: {device_name}")
                 self._log_message(f"Модели будут перезагружены при следующей генерации")

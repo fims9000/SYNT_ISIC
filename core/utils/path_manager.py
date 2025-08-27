@@ -78,7 +78,7 @@ class PathManager:
         temp_dir = self.get_cache_dir() / "temp"
         return self.ensure_dir(str(temp_dir))
     
-    def create_unique_filename(self, base_name: str, extension: str = ".jpg") -> str:
+    def create_unique_filename(self, base_name: str, extension: str = ".png") -> str:
         """Создает уникальное имя файла"""
         counter = 1
         filename = f"{base_name}{extension}"
@@ -90,18 +90,22 @@ class PathManager:
         return filename
     
     def get_isic_filename(self, isic_number: int) -> str:
-        """Создает имя файла в формате ISIC"""
-        return f"ISIC_{isic_number:07d}.jpg"
+        """Создает имя файла в формате ISIC (png)"""
+        return f"ISIC_{isic_number:07d}.png"
     
     def get_next_isic_number(self, output_dir: str = "generated_images") -> int:
-        """Получает следующий номер ISIC для синтетического датасета"""
-        output_path = self.get_output_dir(output_dir)
+        """Получает следующий номер ISIC для синтетического датасета в указанной папке.
+
+        Если передан абсолютный путь, используется он. Иначе — путь относительно
+        базовой директории через get_output_dir.
+        """
+        output_path = Path(output_dir) if os.path.isabs(output_dir) else self.get_output_dir(output_dir)
         max_number = 0
         
-        # Ищем существующие файлы ISIC
-        for file in output_path.glob("ISIC_*.jpg"):
+        # Ищем существующие файлы ISIC (поддерживаем .png и .jpg на всякий случай)
+        candidates = list(output_path.glob("ISIC_*.png")) + list(output_path.glob("ISIC_*.jpg"))
+        for file in candidates:
             try:
-                # Извлекаем номер из имени файла
                 number_str = file.stem.split("_")[1]
                 number = int(number_str)
                 max_number = max(max_number, number)

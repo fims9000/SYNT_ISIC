@@ -14,12 +14,13 @@ core/logs/
 # Сгенерированные изображения
 generated_images/
 xai_results/
+test/
 
 # Модели и веса (могут быть большими)
 *.pth
 *.pt
 *.ckpt
-*.h5
+*.h5image.png
 *.hdf5
 *.pkl
 *.pickle
@@ -84,7 +85,10 @@ dmypy.json
 
 # Файлы размером более 95MB (GitHub ограничение)
 # Добавляем конкретные большие файлы, если они есть
+checkpoints/
 
-#сторонние директории
+#сторонние директории и файлы
 classification_and_segmentation/
 models/
+metrics/
+filter_data.py
