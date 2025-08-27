@@ -3,7 +3,7 @@
 
 <div align="center">
 
-*Revolutionary integration of Denoising Diffusion Probabilistic Models with Explainable AI for trustworthy medical image generation*
+*Integration of Denoising Diffusion Probabilistic Models with Explainable AI for trustworthy medical image generation*
 
 [📖 Documentation](#documentation) -  [🚀 Quick Start](#quick-start) -  [🔬 Methods](#methods) -  [📊 Results](#results) -  [💬 Citation](#citation)
 
