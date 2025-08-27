@@ -119,9 +119,10 @@ class ModelManager:
                 scheduler = self.create_scheduler(class_name)
                 self.loaded_schedulers[class_name] = scheduler
                 # Метаданные
+                import time
                 self.model_metadata[class_name] = {
                     "model_path": str(cached_path),
-                    "loaded_at": torch.cuda.Event() if torch.cuda.is_available() else None,
+                    "loaded_at": time.time(),
                     "device": str(self.device)
                 }
                 return True
@@ -154,9 +155,10 @@ class ModelManager:
             self.loaded_schedulers[class_name] = scheduler
             
             # Сохраняем метаданные
+            import time
             self.model_metadata[class_name] = {
                 "model_path": str(model_path),
-                "loaded_at": torch.cuda.Event() if torch.cuda.is_available() else None,
+                "loaded_at": time.time(),
                 "device": str(self.device)
             }
             
@@ -197,14 +199,30 @@ class ModelManager:
                 num_train_timesteps=1000,  # TIMESTEPS из train_diffusion.py
                 beta_schedule="squaredcos_cap_v2"  # beta_schedule из train_diffusion.py
             )
+            # Установим число шагов инференса из конфига (фолбэк на 50)
+            try:
+                steps = int(self.config_manager.get_generation_param("inference_timesteps"))
+            except Exception:
+                steps = 50
+            steps = max(1, min(1000, steps))
+            scheduler.set_timesteps(steps)
             
             self.logger.log_info(f"Создан планировщик для класса {class_name}")
             return scheduler
             
         except Exception as e:
             self.logger.log_error(f"Ошибка создания планировщика для класса {class_name}: {e}")
-            # Возвращаем планировщик по умолчанию
-            return DDPMScheduler()
+            # Корректный фолбэк с теми же параметрами
+            try:
+                fallback = DDPMScheduler(
+                    num_train_timesteps=1000,
+                    beta_schedule="squaredcos_cap_v2",
+                    prediction_type="epsilon"
+                )
+                return fallback
+            except Exception:
+                # Последний шанс – вернуть дефолтный планировщик, вызывающийся без параметров
+                return DDPMScheduler()
             
     def unload_model(self, class_name: str) -> bool:
         """Выгружает модель для указанного класса"""
@@ -263,8 +281,12 @@ class ModelManager:
             model = self.loaded_models[class_name]
             
             # Проверяем, что модель на правильном устройстве
-            if model.device != self.device:
-                self.logger.log_warning(f"Модель {class_name} находится на неправильном устройстве")
+            try:
+                model_device = next(model.parameters()).device
+            except Exception:
+                model_device = torch.device("cpu")
+            if model_device.type != self.device.type or (model_device.type == "cuda" and model_device.index != self.device.index):
+                self.logger.log_warning(f"Модель {class_name} находится на неправильном устройстве: {model_device} != {self.device}")
                 return False
                 
             # Проверяем, что модель в режиме eval

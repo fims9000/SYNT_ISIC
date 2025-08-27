@@ -51,7 +51,7 @@ class ConfigManager:
             "generation": {
                 "image_size": 128,
                 "train_timesteps": 1000,
-                "inference_timesteps": 1000,
+                "inference_timesteps": 50,
                 "batch_size": 1
             },
             "ui": {
@@ -89,13 +89,15 @@ class ConfigManager:
                 default[key] = value
     
     def _setup_paths(self):
-        """Настраивает пути относительно текущей рабочей директории"""
-        base_dir = os.getcwd()
+        """Настраивает пути относительно корня проекта, а не CWD"""
+        # Корень проекта: два уровня вверх от этого файла: core/config/ -> проект
+        base_dir = str(Path(__file__).resolve().parents[2])
         
         # Обновляем пути, делая их относительными к базовой директории
         for path_key in self.config["paths"]:
-            if not os.path.isabs(self.config["paths"][path_key]):
-                self.config["paths"][path_key] = os.path.join(base_dir, self.config["paths"][path_key])
+            val = self.config["paths"][path_key]
+            if not os.path.isabs(val):
+                self.config["paths"][path_key] = os.path.join(base_dir, val)
         
         # Создаем необходимые директории
         for path in self.config["paths"].values():

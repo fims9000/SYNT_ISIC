@@ -6,7 +6,7 @@ import logging
 import logging.handlers
 import os
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from pathlib import Path
 
 class Logger:
@@ -21,7 +21,9 @@ class Logger:
             log_dir: Директория для логов
         """
         self.name = name
-        self.log_dir = Path(log_dir)
+        # Разрешаем путь логов относительно корня проекта, если путь относительный
+        project_root = Path(__file__).resolve().parents[2]
+        self.log_dir = Path(log_dir) if os.path.isabs(log_dir) else (project_root / log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
         # Создаем основной логгер
@@ -177,10 +179,20 @@ class Logger:
         """Логирует завершение генерации"""
         self.logger.info(f"Генерация завершена: {class_name} x{count} -> {output_dir}")
     
-    def log_error(self, error: Exception, context: str = ""):
-        """Логирует ошибку"""
-        error_msg = f"ОШИБКА {context}: {str(error)}"
-        self.logger.error(error_msg, exc_info=True)
+    def log_error(self, error: Union[Exception, str], context: str = "", include_traceback: Optional[bool] = None):
+        """Логирует ошибку.
+
+        Args:
+            error: Объект исключения или строковое сообщение
+            context: Дополнительный контекст
+            include_traceback: Управление добавлением traceback.
+                По умолчанию: True, если передан Exception; иначе False.
+        """
+        is_exc = isinstance(error, BaseException)
+        msg = f"ОШИБКА {context}: {str(error)}" if context else f"ОШИБКА: {str(error)}"
+        if include_traceback is None:
+            include_traceback = bool(is_exc)
+        self.logger.error(msg, exc_info=include_traceback)
     
     def log_warning(self, message: str):
         """Логирует предупреждение"""

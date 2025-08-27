@@ -155,6 +155,19 @@ print(f"🔬 XAI готовность: {XAI_AVAILABLE}")
 print(f"📊 Captum: {CAPTUM_AVAILABLE}, SHAP: {SHAP_AVAILABLE}")
 print("✅ Инициализация завершена!")
 
+# Утилита: текстовый прогресс-бар в лог
+def _log_progress_bar(label: str, current: int, total: int, width: int = 30):
+    try:
+        current = max(0, int(current))
+        total = max(1, int(total))
+        filled = int(width * current / total)
+        bar = '#' * filled + '-' * (width - filled)
+        pct = 100.0 * current / total
+        print(f"{label}: [{bar}] {current}/{total} ({pct:.0f}%)", flush=True)
+    except Exception:
+        # На всякий случай не ломаем пайплайн из-за логов
+        pass
+
 # === КОНФИГУРАЦИЯ ПРОЕКТА ===
 
 # Пути к данным и моделям (адаптированы под вашу структуру)
@@ -603,8 +616,8 @@ if classifier is None:
     print("❌ Критическая ошибка: не удалось загрузить классификатор")
     raise RuntimeError("Классификатор не может быть загружен")
 
-# Выбор класса для анализа
-TARGET_CLASS_NAME = 'MEL'  # ИЗМЕНИТЕ НА НУЖНЫЙ КЛАСС
+# Выбор класса для анализа (можно переопределить через переменную окружения XAI_TARGET_CLASS)
+TARGET_CLASS_NAME = os.environ.get('XAI_TARGET_CLASS', 'MEL')  # ИЗМЕНИТЕ НА НУЖНЫЙ КЛАСС
 
 if TARGET_CLASS_NAME not in CLASS_NAMES:
     print(f"❌ Неверный класс '{TARGET_CLASS_NAME}'. Доступные: {CLASS_NAMES}")
@@ -698,9 +711,35 @@ def generate_trajectory_optimized(unet_model, scheduler,
     timesteps = scheduler.timesteps
     
     # Определение шагов для сохранения
+    # Режим 1: обычный (каждые save_every по индексу шага)
     save_indices = set(range(0, num_inference_steps, save_every))
     if (num_inference_steps - 1) not in save_indices:
         save_indices.add(num_inference_steps - 1)  # Всегда сохраняем последний
+
+    # Режим 2: абсолютные t (например, save_every=250 при 50 шагах)
+    # Подбираем ближайшие доступные индексы под целевые t кратные save_every
+    try:
+        save_by_absolute_t = save_every >= num_inference_steps
+    except Exception:
+        save_by_absolute_t = False
+    if save_by_absolute_t:
+        try:
+            t_list = [int(float(t)) for t in timesteps]
+            desired_t = set()
+            # Включаем 0 и max (обычно ~1000), и кратные save_every
+            desired_t.add(0)
+            desired_t.add(max(t_list))
+            step_val = max(1, int(save_every))
+            k = 0
+            while k <= 1000:
+                desired_t.add(k)
+                k += step_val
+            # Находим ближайшие индексы к целевым t
+            for dt in desired_t:
+                closest_idx = min(range(len(t_list)), key=lambda i: abs(t_list[i] - dt))
+                save_indices.add(closest_idx)
+        except Exception:
+            pass
     
     trajectory = []
     saved_timesteps = []
@@ -711,13 +750,14 @@ def generate_trajectory_optimized(unet_model, scheduler,
         unet_model.eval()
         
         with torch.no_grad():
+            total_steps = len(timesteps)
             progress_bar = tqdm(
                 enumerate(timesteps), 
-                total=len(timesteps),
+                total=total_steps,
                 desc=f"Denoising {TARGET_CLASS_NAME}",
                 ncols=100
             )
-            
+
             for step_idx, timestep in progress_bar:
                 # Подготовка входных данных
                 timestep_tensor = timestep.unsqueeze(0).to(device)
@@ -734,7 +774,16 @@ def generate_trajectory_optimized(unet_model, scheduler,
                 current_image = scheduler_output.prev_sample
                 
                 # Сохранение промежуточного результата
-                if step_idx in save_indices:
+                save_frame = (step_idx in save_indices)
+                if not save_frame and save_by_absolute_t:
+                    try:
+                        t_int = int(float(timestep))
+                        # Сохраняем, если t кратен save_every, а также гарантируем t==0
+                        if (t_int % max(1, save_every) == 0) or (t_int == 0):
+                            save_frame = True
+                    except Exception:
+                        save_frame = False
+                if save_frame:
                     # Копируем на CPU для экономии GPU памяти
                     trajectory.append(current_image.detach().cpu().clone())
                     saved_timesteps.append(float(timestep))
@@ -746,6 +795,11 @@ def generate_trajectory_optimized(unet_model, scheduler,
                         'saved': len(trajectory),
                         'mem': f'{torch.cuda.memory_allocated(device) / 1024**2:.0f}MB' if device.type == 'cuda' else 'N/A'
                     })
+                    # Логируем текстовый прогресс для GUI логов
+                    try:
+                        _log_progress_bar("Denoising", step_idx + 1, total_steps)
+                    except Exception:
+                        pass
                 
                 # Очистка промежуточных тензоров
                 del noise_pred
@@ -1788,18 +1842,21 @@ def statistical_validation_comprehensive(top_k_shifts, bottom_k_shifts,
         observed_diff = np.mean(top_k) - np.mean(bottom_k)
         
         permuted_diffs = []
-        for _ in range(n_permutations):
-            np.random.shuffle(combined)
-            perm_top = combined[:len(top_k)]
-            perm_bottom = combined[len(top_k):]
-            
-            perm_diff = np.mean(perm_top) - np.mean(perm_bottom)
-            permuted_diffs.append(perm_diff)
+        if len(top_k) >= 2 and len(bottom_k) >= 2:
+            for _ in range(n_permutations):
+                np.random.shuffle(combined)
+                perm_top = combined[:len(top_k)]
+                perm_bottom = combined[len(top_k):]
+                perm_diff = np.mean(perm_top) - np.mean(perm_bottom)
+                permuted_diffs.append(perm_diff)
+        else:
+            # Недостаточно данных для смыслового пермутационного теста
+            permuted_diffs = np.array([observed_diff])
         
         permuted_diffs = np.array(permuted_diffs)
         
         # Two-tailed p-value
-        p_value = np.mean(np.abs(permuted_diffs) >= np.abs(observed_diff))
+        p_value = np.mean(np.abs(permuted_diffs) >= np.abs(observed_diff)) if permuted_diffs.size > 1 else 1.0
         
         return {
             'observed_difference': observed_diff,
@@ -1813,16 +1870,23 @@ def statistical_validation_comprehensive(top_k_shifts, bottom_k_shifts,
     
     # 6. ТЕСТЫ НА НОРМАЛЬНОСТЬ
     normality_tests = {}
-    
-    # Shapiro-Wilk test
-    if len(top_k) <= 5000:  # Ограничение Shapiro-Wilk
-        shapiro_top = stats.shapiro(top_k)
-        shapiro_bottom = stats.shapiro(bottom_k)
-        
-        normality_tests['shapiro_wilk'] = {
-            'top_k': {'statistic': shapiro_top[0], 'p_value': shapiro_top[1], 'normal': shapiro_top[1] > alpha},
-            'bottom_k': {'statistic': shapiro_bottom[0], 'p_value': shapiro_bottom[1], 'normal': shapiro_bottom[1] > alpha}
-        }
+
+    # Shapiro-Wilk test (требует n >= 3)
+    try:
+        if len(top_k) >= 3 and len(bottom_k) >= 3 and len(top_k) <= 5000 and len(bottom_k) <= 5000:
+            shapiro_top = stats.shapiro(top_k)
+            shapiro_bottom = stats.shapiro(bottom_k)
+            normality_tests['shapiro_wilk'] = {
+                'top_k': {'statistic': shapiro_top[0], 'p_value': shapiro_top[1], 'normal': shapiro_top[1] > alpha},
+                'bottom_k': {'statistic': shapiro_bottom[0], 'p_value': shapiro_bottom[1], 'normal': shapiro_bottom[1] > alpha}
+            }
+        else:
+            normality_tests['shapiro_wilk'] = {
+                'top_k': {'skipped': True, 'reason': 'sample_size < 3 or > 5000'},
+                'bottom_k': {'skipped': True, 'reason': 'sample_size < 3 or > 5000'}
+            }
+    except Exception as e:
+        normality_tests['shapiro_wilk'] = {'error': str(e)}
     
     # Kolmogorov-Smirnov test
     ks_top = stats.kstest(top_k, 'norm', args=(np.mean(top_k), np.std(top_k)))
@@ -2635,17 +2699,18 @@ def run_comprehensive_xai_pipeline(trajectory, timesteps, xai_analyzer, classifi
         xai_maps = {}
         region_data = {}
         
+        total_frames = len(trajectory)
         for i, (image_tensor, timestep) in enumerate(tqdm(zip(trajectory, timesteps), 
                                                          desc="Computing XAI maps", 
-                                                         total=len(trajectory))):
+                                                         total=total_frames)):
             image_gpu = image_tensor.to(device)
             
             try:
-                # Комбинированная атрибуция (IG + SHAP)
+                # Считаем отдельно IG и SHAP, чтобы сохранить и подписать каждую карту
+                ig_attr = xai_analyzer.compute_integrated_gradients(image_gpu, target_class_id)
+                shap_attr = xai_analyzer.compute_shap_approximation(image_gpu, target_class_id)
                 combined_attr, method_details = xai_analyzer.compute_combined_attribution(
-                    image_gpu, target_class_id, 
-                    methods=['ig', 'shap'], 
-                    weights=[0.5, 0.5]
+                    image_gpu, target_class_id, methods=['ig', 'shap'], weights=[0.5, 0.5]
                 )
                 
                 # Выделение регионов
@@ -2673,6 +2738,7 @@ def run_comprehensive_xai_pipeline(trajectory, timesteps, xai_analyzer, classifi
                 
                 # Визуализация каждого шага
                 if save_results:
+                    # Сохраняем комбинированную карту
                     viz_path = results_dir / f"xai_step_{step_key}.png"
                     visualize_xai_step_comprehensive(
                         image_tensor, combined_attr, 
@@ -2680,6 +2746,21 @@ def run_comprehensive_xai_pipeline(trajectory, timesteps, xai_analyzer, classifi
                         timestep, target_class_name, save_path=viz_path
                     )
                     results['visualizations'].append(str(viz_path))
+                    # Дополнительно сохраняем IG и SHAP отдельно для прозрачности
+                    viz_path_ig = results_dir / f"xai_step_{step_key}_IG.png"
+                    visualize_xai_step_comprehensive(
+                        image_tensor, ig_attr,
+                        top_k_data['mask'], bottom_k_data['mask'],
+                        timestep, f"{target_class_name} (IG)", save_path=viz_path_ig
+                    )
+                    results['visualizations'].append(str(viz_path_ig))
+                    viz_path_shap = results_dir / f"xai_step_{step_key}_SHAP.png"
+                    visualize_xai_step_comprehensive(
+                        image_tensor, shap_attr,
+                        top_k_data['mask'], bottom_k_data['mask'],
+                        timestep, f"{target_class_name} (SHAP)", save_path=viz_path_shap
+                    )
+                    results['visualizations'].append(str(viz_path_shap))
                 else:
                     visualize_xai_step_comprehensive(
                         image_tensor, combined_attr, 
@@ -2690,6 +2771,11 @@ def run_comprehensive_xai_pipeline(trajectory, timesteps, xai_analyzer, classifi
             except Exception as e:
                 print(f"   ⚠️  Ошибка в шаге {i} (t={timestep}): {e}")
                 continue
+            # Логируем прогресс XAI по кадрам
+            try:
+                _log_progress_bar("XAI maps", i + 1, total_frames)
+            except Exception:
+                pass
         
         results['xai_maps'] = xai_maps
         results['region_analysis'] = region_data
@@ -2705,7 +2791,8 @@ def run_comprehensive_xai_pipeline(trajectory, timesteps, xai_analyzer, classifi
         # Выбираем несколько ключевых временных шагов для интервенций
         key_steps = [0, len(trajectory)//2, len(trajectory)-4,len(trajectory)-3,len(trajectory)-2, len(trajectory)-1]  # Начало, середина, конец
         
-        for step_idx in key_steps:
+        total_keys = len(key_steps)
+        for idx_k, step_idx in enumerate(key_steps):
             if step_idx >= len(trajectory):
                 continue
                 
@@ -2760,6 +2847,11 @@ def run_comprehensive_xai_pipeline(trajectory, timesteps, xai_analyzer, classifi
                     step_interventions, step_cfi, timestep, save_path=viz_path
                 )
                 results['visualizations'].append(str(viz_path))
+            # Логируем прогресс по интервенциям/CFI
+            try:
+                _log_progress_bar("Interventions/CFI", idx_k + 1, total_keys)
+            except Exception:
+                pass
         
         results['interventions'] = interventions_data
         results['cfi_analysis'] = cfi_data
@@ -2795,6 +2887,10 @@ def run_comprehensive_xai_pipeline(trajectory, timesteps, xai_analyzer, classifi
                 )
             
             print("   ✅ Time-SHAP анализ завершён")
+            try:
+                _log_progress_bar("Time-SHAP", 1, 1)
+            except Exception:
+                pass
             
         
             
@@ -3026,6 +3122,10 @@ def run_comprehensive_xai_pipeline(trajectory, timesteps, xai_analyzer, classifi
                 # Сохраняем единый коллаж
                 plt.savefig(results_dir / "gradcam_overview.png")
                 plt.close()
+            try:
+                _log_progress_bar("Grad-CAM", 1, 1)
+            except Exception:
+                pass
         except Exception as e:
             print(f"   ❌ Ошибка в Grad-CAM: {e}")
             import traceback

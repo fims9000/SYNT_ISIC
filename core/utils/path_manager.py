@@ -18,7 +18,9 @@ class PathManager:
         Args:
             base_dir: Базовая директория (по умолчанию - текущая рабочая)
         """
-        self.base_dir = Path(base_dir or os.getcwd()).resolve()
+        # Определяем корень проекта относительно расположения файла (…/core/utils/ -> проект)
+        default_project_root = Path(__file__).resolve().parents[2]
+        self.base_dir = Path(base_dir).resolve() if base_dir else default_project_root
         self.logger = logging.getLogger(__name__)
         
     def get_absolute_path(self, relative_path: str) -> Path:
@@ -48,8 +50,8 @@ class PathManager:
         
         classes = []
         for file in checkpoint_dir.glob("unet_*_best.pth"):
-            # Извлекаем имя класса из имени файла
-            class_name = file.stem[5:-5]  # убираем "unet_" и "_best"
+            # Извлекаем имя класса из имени файла надёжно
+            class_name = file.stem.replace("unet_", "").replace("_best", "")
             if class_name:
                 classes.append(class_name)
         

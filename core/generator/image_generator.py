@@ -64,18 +64,16 @@ class ImageGenerator:
         # Загружаем цветовые статистики
         self._load_color_statistics()
 
-        # Кол-во шагов денойзинга (синхронизировано с XAI по умолчанию)
-        self.inference_steps: int = 50
-        
-        # Предзагружаем все доступные модели (после полной инициализации)
+        # Кол-во шагов денойзинга: читаем из конфига (фолбэк 50)
         try:
-            self._preload_all_models()
-        except Exception as e:
-            # Если предзагрузка не удалась, логируем ошибку, но не прерываем инициализацию
-            if hasattr(self, '_log_message'):
-                self._log_message(f"Предзагрузка моделей не удалась: {e}", "warning")
-            else:
-                print(f"Предзагрузка моделей не удалась: {e}")
+            cfg_steps = int(self.config_manager.get_generation_param("inference_timesteps"))
+        except Exception:
+            cfg_steps = 50
+        self.inference_steps: int = max(1, min(1000, cfg_steps))
+        self._log_message(f"inference_steps = {self.inference_steps} (из конфига)")
+        
+        # Предзагрузка моделей отключена: модели будут загружаться лениво при старте генерации
+        # (по выбранным классам)
             
     def set_progress_callback(self, callback: Callable[[int, int, str], None]):
         """Устанавливает callback для обновления прогресса"""
@@ -161,7 +159,6 @@ class ImageGenerator:
                 
             available_classes = self.get_available_classes()
             if not available_classes:
-                print("Нет доступных классов для предзагрузки")
                 return
                 
             if hasattr(self, '_log_message'):
@@ -170,28 +167,10 @@ class ImageGenerator:
                 print(f"Предзагружаю {len(available_classes)} моделей...")
             
             for class_name in available_classes:
-                try:
-                    success = self.model_manager.load_model(class_name)
-                    if success:
-                        if hasattr(self, '_log_message'):
-                            self._log_message(f"Модель {class_name} предзагружена успешно")
-                        else:
-                            print(f"Модель {class_name} предзагружена успешно")
-                    else:
-                        if hasattr(self, '_log_message'):
-                            self._log_message(f"Не удалось предзагрузить модель {class_name}", "warning")
-                        else:
-                            print(f"Не удалось предзагрузить модель {class_name}")
-                except Exception as e:
-                    if hasattr(self, '_log_message'):
-                        self._log_message(f"Ошибка предзагрузки модели {class_name}: {e}", "error")
-                    else:
-                        print(f"Ошибка предзагрузки модели {class_name}: {e}")
+                # Предзагрузка отключена
+                pass
                     
-            if hasattr(self, '_log_message'):
-                self._log_message("Предзагрузка моделей завершена")
-            else:
-                print("Предзагрузка моделей завершена")
+            return
             
         except Exception as e:
             if hasattr(self, '_log_message'):
@@ -302,7 +281,11 @@ class ImageGenerator:
             torch.cuda.synchronize()
             
     def generate_single_image(self, class_name: str, output_path: str, 
-                            postprocess: bool = True, seed: Optional[int] = None) -> bool:
+                            postprocess: bool = True, seed: Optional[int] = None,
+                            progress_offset_units: int = 0,
+                            progress_total_units: int = 0,
+                            overall_index: int = 0,
+                            overall_total: int = 0) -> bool:
         """Генерирует одно изображение для указанного класса"""
         try:
             if self.stop_requested:
@@ -348,24 +331,29 @@ class ImageGenerator:
                 except Exception as e_move:
                     self._log_message(f"Не удалось перенести модель {class_name} на {self.device}: {e_move}", "error")
                     return False
-            scheduler = self._create_scheduler()
+            # Используем планировщик из ModelManager для единообразия параметров
+            scheduler = self.model_manager.create_scheduler(class_name)
             
             # Генерируем изображение
             with torch.no_grad():
                 # Устанавливаем seed (если передан)
                 if seed is not None:
                     local_seed = int(seed)
-                    torch.manual_seed(local_seed)
+                    # Используем локальный генератор PyTorch для детерминированного шума
+                    torch_gen = torch.Generator(device=self.device)
+                    torch_gen.manual_seed(local_seed)
+                    # Также синхронизируем NumPy (на случай постобработки)
                     np.random.seed(local_seed)
-                    if torch.cuda.is_available():
-                        torch.cuda.manual_seed(local_seed)
 
                 # Создаем случайный шум с правильным размером
-                noise = torch.randn(1, 3, 128, 128, device=self.device)
+                if seed is not None:
+                    noise = torch.randn(1, 3, 128, 128, device=self.device, generator=torch_gen)
+                else:
+                    noise = torch.randn(1, 3, 128, 128, device=self.device)
                 
                 # Процесс денойзинга
                 latents = noise
-                for t in scheduler.timesteps:
+                for step_idx, t in enumerate(scheduler.timesteps):
                     if self.stop_requested:
                         return False
                         
@@ -374,6 +362,24 @@ class ImageGenerator:
                     
                     # Обновляем латент
                     latents = scheduler.step(noise_pred, t, latents).prev_sample
+
+                    # Обновляем прогресс по шагам денойзинга (текстовый и общий)
+                    try:
+                        total_units = progress_total_units if progress_total_units > 0 else self.inference_steps
+                        units_done = progress_offset_units + step_idx + 1
+                        per_img_pct = int(100 * (step_idx + 1) / max(1, self.inference_steps))
+                        msg = (
+                            f"Denoising {class_name}: {step_idx + 1}/{self.inference_steps} ("
+                            f"{per_img_pct}%) | image {overall_index}/{overall_total}"
+                        ) if overall_total else (
+                            f"Denoising {class_name}: {step_idx + 1}/{self.inference_steps} ({per_img_pct}%)"
+                        )
+                        # Обновляем общий прогресс-бар: шкала = total_images * inference_steps
+                        # и дублируем текстом текущий шаг, чтобы видеть движение в логах
+                        if (step_idx % 5 == 0) or (step_idx + 1 == self.inference_steps):
+                            self._update_progress(units_done, total_units, msg)
+                    except Exception:
+                        pass
                     
             # Конвертируем в изображение
             image = latents.squeeze(0).permute(1, 2, 0)
@@ -532,7 +538,16 @@ class ImageGenerator:
                         # seed = base + class_offset + индекс внутри класса
                         seed_value = (int(self.base_seed) + class_offset + i) & 0x7fffffff
 
-                    success = self.generate_single_image(class_name, str(file_path), postprocess, seed=seed_value)
+                    success = self.generate_single_image(
+                        class_name,
+                        str(file_path),
+                        postprocess,
+                        seed=seed_value,
+                        progress_offset_units=generated_count * self.inference_steps,
+                        progress_total_units=total_images * self.inference_steps,
+                        overall_index=generated_count + 1,
+                        overall_total=total_images,
+                    )
                     
                     if success:
                         generated_count += 1
@@ -561,10 +576,16 @@ class ImageGenerator:
                             else:
                                 print(f"Память после изображения {generated_count}: {memory_used:.3f}ГБ")
                         
-                        # Запускаем XAI для каждого 1,11,21,... изображения
+                        # Запускаем XAI согласно правилу: для каждого класса каждые xai_every_n
+                        # и ровно один раз, если изображений в классе < xai_every_n
                         try:
-                            if self.xai_hook and ((generated_count - 1) % self.xai_every_n == 0):
-                                self.xai_hook(str(file_path), class_name)
+                            if self.xai_hook:
+                                # Номер внутри класса = i (0-based); каждые N-е: i % N == 0
+                                if (i % self.xai_every_n == 0) or (count < self.xai_every_n and i == 0):
+                                    self.xai_hook(str(file_path), class_name)
+                                    # Сигнализируем GUI, что этот класс должен получить полный XAI (очередь)
+                                    if hasattr(self, 'log_callback') and self.log_callback:
+                                        self.log_callback(f"[XAI] enqueue_full:{class_name}:{file_path}")
                         except Exception as _xai_err:
                             # Не прерываем генерацию
                             self._log_message(f"Ошибка XAI hook: {_xai_err}", "warning")
@@ -618,8 +639,17 @@ class ImageGenerator:
         """Добавляет запись в CSV файл"""
         try:
             with open(csv_path, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=data.keys())
-                writer.writerow(data)
+                headers = ["filename", "class", "isic_number", "source", "generated_at"]
+                writer = csv.DictWriter(f, fieldnames=headers)
+                # Перестроим запись под фиксированные колонки
+                row = {
+                    "filename": data.get("filename", ""),
+                    "class": data.get("class", ""),
+                    "isic_number": data.get("isic_number", ""),
+                    "source": data.get("source", ""),
+                    "generated_at": data.get("generated_at", ""),
+                }
+                writer.writerow(row)
                 
         except Exception as e:
             if hasattr(self, '_log_message'):
