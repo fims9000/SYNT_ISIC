@@ -1,8 +1,7 @@
 
-# SYNT_ISIC: Explainable Diffusion Models for Medical Image Synthesis
+# Explainable Artificial Intelligence for Generative DDPM Models in Medical Diagnostics
 
 <div align="center">
-
 
 *Revolutionary integration of Denoising Diffusion Probabilistic Models with Explainable AI for trustworthy medical image generation*
 
@@ -635,14 +634,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 2. **🆕 Create Issue**: Use issue templates for bugs/features
 3. **💭 Discussions**: Join [community discussions](https://github.com/fims9000/SYNT_ISIC/discussions)
 
-### 📧 Contact Information
-
-- **Primary Maintainer**: [@fims9000](https://github.com/fims9000)
-- **Email**: [contact@synt-isic.org](mailto:contact@synt-isic.org)
-- **Documentation**: [synt-isic.readthedocs.io](https://synt-isic.readthedocs.io)
-
-***
-
 ## 🔮 Future Roadmap
 
 ### 🚧 Upcoming Features
@@ -661,5 +652,3 @@ Transform medical AI through explainable generative models, ensuring trust, tran
 ***
 
 <div align="center">
-
-**Made with ❤️ for the medical AI community**
