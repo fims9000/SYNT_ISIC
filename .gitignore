@@ -2,7 +2,6 @@
 checkpoints/
 
 # Кэш и временные файлы
-core/cache/
 test_cache/
 *.cache
 *.tmp
