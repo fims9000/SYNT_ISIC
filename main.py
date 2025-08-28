@@ -1384,12 +1384,14 @@ class SyntheticDataGenerator(QMainWindow):
         try:
             # Перехват решения об очереди полного XAI
             if isinstance(line, str) and line.startswith('[XAI] enqueue_full:'):
-                parts = line.split(':', 2)
-                if len(parts) == 3:
+                parts = line.split(':', 4)
+                if len(parts) >= 3:
                     class_name = parts[1]
                     file_path = parts[2]
+                    seed_value = parts[3] if len(parts) >= 4 else ''
+                    inf_steps = parts[4] if len(parts) >= 5 else ''
                     # Добавляем в очередь, если ещё нет активного воркера
-                    self.xai_queue.append((class_name, file_path))
+                    self.xai_queue.append((class_name, file_path, seed_value, inf_steps))
                     # Если воркер не работает — стартуем следующий
                     if (not self.xai_worker) or (self.xai_worker and not self.xai_worker.isRunning()):
                         self._start_next_xai_job()
@@ -1403,9 +1405,13 @@ class SyntheticDataGenerator(QMainWindow):
         try:
             if not self.xai_queue:
                 return
-            class_name, file_path = self.xai_queue.pop(0)
+            class_name, file_path, seed_value, inf_steps = self.xai_queue.pop(0)
             import os as _os
             _os.environ['XAI_TARGET_CLASS'] = class_name
+            if seed_value:
+                _os.environ['XAI_GENERATION_SEED'] = seed_value
+            if inf_steps:
+                _os.environ['XAI_INFERENCE_STEPS'] = inf_steps
             self.logs_text.append(f"XAI: запуск полного анализа для класса {class_name} (из очереди)")
             self.xai_worker = XAIWorker(working_dir=str(self.project_root))
             self.xai_worker.log_updated.connect(self.logs_text.append)

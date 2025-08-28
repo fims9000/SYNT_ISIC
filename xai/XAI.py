@@ -240,11 +240,24 @@ BOTTOM_K_PERCENT = 10  # Процент наименее важных регио
 IG_N_STEPS = 50  # Шаги для Integrated Gradients
 SHAP_N_SAMPLES = 512  # Сэмплы для SHAP аппроксимации
 
-# Переопределение частоты сохранения шагов через переменные окружения
+# Переопределение параметров через переменные окружения
 try:
     _env_save_every = int(os.environ.get("XAI_SAVE_EVERY_N", str(SAVE_EVERY_N_STEPS)))
     if _env_save_every > 0:
         SAVE_EVERY_N_STEPS = _env_save_every
+except Exception:
+    pass
+
+try:
+    _env_inf_steps = int(os.environ.get("XAI_INFERENCE_STEPS", str(INFERENCE_STEPS)))
+    if _env_inf_steps > 0:
+        INFERENCE_STEPS = _env_inf_steps
+except Exception:
+    pass
+
+try:
+    _env_seed = int(os.environ.get("XAI_GENERATION_SEED", str(GENERATION_SEED)))
+    GENERATION_SEED = _env_seed
 except Exception:
     pass
 

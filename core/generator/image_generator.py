@@ -582,10 +582,13 @@ class ImageGenerator:
                             if self.xai_hook:
                                 # Номер внутри класса = i (0-based); каждые N-е: i % N == 0
                                 if (i % self.xai_every_n == 0) or (count < self.xai_every_n and i == 0):
+                                    # Передаем в XAI путь и класс; seed будет прокинут через окружение
                                     self.xai_hook(str(file_path), class_name)
                                     # Сигнализируем GUI, что этот класс должен получить полный XAI (очередь)
                                     if hasattr(self, 'log_callback') and self.log_callback:
-                                        self.log_callback(f"[XAI] enqueue_full:{class_name}:{file_path}")
+                                        seed_info = str(seed_value) if seed_value is not None else ''
+                                        steps_info = str(self.inference_steps)
+                                        self.log_callback(f"[XAI] enqueue_full:{class_name}:{file_path}:{seed_info}:{steps_info}")
                         except Exception as _xai_err:
                             # Не прерываем генерацию
                             self._log_message(f"Ошибка XAI hook: {_xai_err}", "warning")
