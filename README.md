@@ -1,143 +1,344 @@
-## ISIC Synthetic Data Generator (GUI) with Explainable AI
+# 🏥 SYNT_ISIC: GUI для синтетической генерации дерматологических изображений
 
-This repository provides a self-contained graphical application for generating synthetic dermatological images using diffusion models (UNet + DDPM scheduler) and for performing per-image explainability (XAI). The application is engineered to be cloned and executed from any directory without path-dependent assumptions; all runtime paths are resolved relative to the project root.
+**🚀 Графическое приложение для генерации синтетических данных ISIC с объяснимым AI**
+*Реализация диффузионных моделей DDPM с интеграцией методов XAI для дерматологической диагностики*
 
-The training code under `diffusion/` is included for reference and scientific completeness; it is not required to operate the GUI.
+<div align="center">
 
-### Tracked repository contents
+[🎯 **Архитектура**](#-архитектура-системы) -  [⚡ **Быстрый старт**](#-установка-и-запуск) -  [📐 **XAI методы**](#-explainability-xai-подробности) -  [🔬 **Использование**](#-инструкция-по-использованию)
+
+</div>
+
+## 🎯 Основные возможности
+
+Данный репозиторий предоставляет **самодостаточное графическое приложение** для генерации синтетических дерматологических изображений с использованием диффузионных моделей и выполнения объяснимого анализа с интеграцией:
+
+### 🏗️ Ключевые компоненты
+
+- **🧬 Диффузионные модели**: UNet2D с механизмами внимания + планировщик DDPM
+- **📊 Интеграция XAI**: Integrated Gradients + приближенный SHAP для каждого изображения
+- **⚖️ Воспроизводимость**: Детерминистская генерация с контролируемыми сидами
+- **🎚️ Интерактивность**: PyQt5 GUI с живым предпросмотром и управлением
+
+***
+
+## 🏗️ Архитектура системы
+
+### 🔄 Пайплайн генерации с XAI
 
 ```
-ISICGUI/
-├── core/                  # Core library: config, IO paths, logging, caching, generation
-├── diffusion/             # Reference training code (not required for GUI runtime)
-├── xai/                   # XAI integration used by the GUI
-├── download_models.py     # Utility to fetch pretrained checkpoints
-├── main.py                # PyQt5 GUI entry point
-├── run_isicgui.bat        # Windows launcher (double-click to start GUI)
-└── requirements.txt       # Python dependencies
+Сид → UNet2D → DDPM Scheduler → Синтетическое изображение → XAI анализ → Визуализация
 ```
 
-Note: Runtime artifacts (model files, generated images, logs, caches, XAI outputs, etc.) are deliberately not tracked and will be created locally when you run the application.
+**Структура проекта:**
 
-## Installation
+```
+SYNT_ISIC/
+├── core/                  # Базовая библиотека: конфигурация, генерация, кеширование
+├── diffusion/             # Обучающий код (справочный, не требуется для GUI)
+├── xai/                   # Интеграция методов объяснимости
+├── download_models.py     # Загрузчик предобученных чекпоинтов
+├── main.py                # Точка входа PyQt5 GUI
+├── run_isicgui.bat        # Windows запускатель
+└── requirements.txt       # Python зависимости
+```
 
-Prerequisites:
-- Python 3.8–3.11
-- Optional but recommended: NVIDIA GPU with CUDA for faster generation (CPU mode is supported)
 
-Steps:
+### 📐 Математические основы
+
+**Диффузионный процесс DDPM:**
+
+```
+Прямой: q(x_t|x_{t-1}) = N(x_t; √(1-β_t)x_{t-1}, β_t I)
+Обратный: p_θ(x_{t-1}|x_t) = N(x_{t-1}; μ_θ(x_t,t), Σ_θ(x_t,t))
+```
+
+**UNet временное внедрение:**
+
+```
+γ(t) = [sin(t/10000^{2k/d}), cos(t/10000^{2k/d})]_{k=0}^{d/2-1}
+ε_θ(x_t, t) = UNet2D(x_t, γ(t))
+```
+
+**XAI методы:**
+
+```
+Integrated Gradients: IG_i(x) = (x_i - x_i')∫_{α=0}^1 ∂f(x'+α(x-x'))/∂x_i dα
+SHAP: φ_i = Σ_{S⊆N\{i}} |S|!(|N|-|S|-1)!/|N|! [v(S∪{i}) - v(S)]
+```
+
+
+***
+
+## ⚡ Установка и запуск
+
+### 🚀 Быстрая установка
+
 ```bash
-git clone https://github.com/<your-org-or-user>/ISICGUI.git
-cd ISICGUI
+# Клонирование репозитория
+git clone https://github.com/fims9000/SYNT_ISIC.git
+cd SYNT_ISIC
 
+# Создание окружения
 python -m venv .venv
 # Windows PowerShell
 .\.venv\Scripts\Activate.ps1
-# macOS/Linux
+# macOS/Linux  
 source .venv/bin/activate
 
+# Установка зависимостей
 pip install --upgrade pip
 pip install -r requirements.txt
-```
 
-## Model Weights (download_models.py)
-
-The GUI expects pretrained diffusion UNet checkpoints per ISIC class and an auxiliary classifier for XAI. Use the downloader to populate the local model directory:
-
-```bash
+# Загрузка предобученных моделей
 python download_models.py
 ```
 
-Behavior and guarantees:
-- Downloads pre-trained diffusion checkpoints and metadata into a local `checkpoints` directory under the project root.
-- The script is idempotent: partial downloads can be re-run; previously downloaded files are reused or verified.
-- On Windows, `download_models.bat` may be used equivalently if present.
 
-## Launching the GUI
+### 📊 Запуск приложения
 
-- Windows: double-click `run_isicgui.bat` (preferred) or run `python main.py` from any directory.
-- macOS/Linux/WSL: run `python main.py` in the repository root with the virtual environment activated.
+**Windows:**
 
-Architectural note: all paths are computed relative to the project root (the folder containing `main.py`). The application does not rely on the current working directory.
+```bash
+# Рекомендуемый способ - двойной клик
+run_isicgui.bat
 
-## Functional Overview
+# Альтернативно
+python main.py
+```
 
-- Per-class synthetic generation using UNet2D with attention at intermediate depths and a DDPM scheduler.
-- Reproducibility via a global base seed (default 42) plus deterministic per-class offsets and per-image indices.
-- Automatic creation of per-class subdirectories under the selected output folder; filenames follow ISIC naming (`ISIC_XXXXXXX.png`) with strictly monotone numbering per class folder.
-- Metadata CSV (`synthetic_dataset.csv`) at the output root recording filename, class, ISIC number, source label, and generation timestamp.
-- Optional XAI overlays based on an auxiliary classifier combining Integrated Gradients and a sampling-based SHAP approximation.
-- Memory-conscious generation: GPU cache cleared after each image; device memory status displayed periodically.
+**macOS/Linux:**
 
-## User Interface and Operation
+```bash
+python main.py
+```
 
-### Top controls
-- Select Models: choose a folder named `checkpoints` that contains the downloaded diffusion checkpoints.
-- Select Output: select the destination directory for generated images; class subfolders are created automatically.
-- XAI Mode: toggle overlays on/off for the center preview. When enabled, the currently displayed image is augmented with an interpretability heatmap.
-- XAI steps: integer spin control to the right of the XAI Mode button; defines the timestep stride for saving XAI steps in the full XAI pipeline (exported via `XAI_SAVE_EVERY_N`).
-- Device: choose CPU or a specific CUDA device (e.g., CUDA:0). The bottom status labels include GPU memory usage, updated roughly every 2 seconds.
+> **Важно:** Все пути разрешаются относительно корня проекта — запуск возможен из любой директории
 
-### Class configuration (left panel)
-- Classes: MEL, NV, BCC, AKIEC, BKL, DF, VASC.
-- Availability: a class is enabled if its checkpoint `unet_<CLASS>_best.pth` is present in the selected models directory.
-- Quantity: select the number of images to generate per enabled class.
+***
 
-### Preview and progress (center panel)
-- Live image preview with proportional scaling.
-- Progress bar indicates global completion. Textual logs additionally report denoising progress every few steps (i/N for the current image) and the overall count.
+## 📋 Функциональность GUI
 
-### Project structure and browsing (right panel)
-- Logical tree with nodes for generated images, XAI results, and checkpoints.
-- Two lists: class folders and image files. Clicking an image updates the center preview. Clicking the preview opens the image in the system viewer.
+<details>
+<summary><b>🎛️ Панели управления</b></summary>
 
-### Logs and configuration (bottom panel)
-- Console with informational, warning, and error messages, including generation progress and XAI events.
-- Static labels: device, model path, available model count, color statistics status, memory usage.
+### Верхняя панель
+| Элемент | Назначение | Особенности |
+|---------|------------|-------------|
+| **Select Models** | Выбор папки с чекпоинтами | Должна содержать `unet_<CLASS>_best.pth` |
+| **Select Output** | Папка для сохранения | Автосоздание подпапок по классам |
+| **XAI Mode** | Переключение наложений | Integrated Gradients + SHAP |
+| **Device** | CPU/CUDA выбор | Мониторинг памяти GPU |
 
-## Explainability (XAI) Details
+### Центральная область
+- **Живой предпросмотр** с пропорциональным масштабированием
+- **Индикатор прогресса** с детализацией по шагам денойзинга (i/N)
+- **Текстовые логи** процесса генерации
 
-- Periodic overlays: for each class, a lightweight XAI overlay is produced every N-th image, with N=10 by default. If fewer than N images are generated for a class, the first image receives an overlay.
-- Methods: Integrated Gradients (primary) and a sampling-based SHAP approximation are combined; attributions are normalized and overlaid as a heatmap blended with the image.
-- Full XAI pipeline: the GUI enqueues a complete analysis for classes at defined intervals. Subprocess execution uses UTF‑8 and a non-interactive plotting backend for robustness. The “XAI steps” spin control sets `XAI_SAVE_EVERY_N` for stepwise exports.
-- Classifier: a ResNet‑18 backbone adapted to the number of classes is used if `classifier.pth` is available; otherwise, ImageNet weights are used with permissive head loading.
+### Боковые панели
+- **Слева:** Конфигурация классов ISIC (MEL, NV, BCC, AKIEC, BKL, DF, VASC)
+- **Справа:** Браузер файлов с деревом проекта и навигацией
 
-## How Generation Works (Algorithmic Summary)
+</details>
+<details>
+<summary><b>🧠 Алгоритм генерации</b></summary>
 
-- Model: UNet2D (sample_size=128, RGB in/out, attention blocks) with a DDPMScheduler (num_train_timesteps=1000, squaredcos_cap_v2 schedule). Inference timesteps default to 50 and are configurable.
-- Seeds: a global base seed is combined with an MD5-derived class offset and the within-class index to ensure deterministic but diverse outputs across classes.
-- Denoising: at each scheduler timestep, the model predicts noise; the scheduler updates the latent accordingly. Tensors and generators are placed on the selected device.
-- Postprocessing: if `color_statistics.json` exists alongside checkpoints, per-class color mean/std adjustments are applied with bounded scaling and smooth blending to avoid artifacts.
+### Технические характеристики
+- **Модель:** UNet2D (sample_size=128, RGB, блоки внимания)
+- **Планировщик:** DDPMScheduler (1000 шагов обучения, squaredcos_cap_v2)
+- **Инференс:** 50 шагов по умолчанию (настраиваемо)
+- **Сидирование:** MD5-производные смещения для классов + глобальный базовый сид
 
-## Practical Usage
+### Процесс денойзинга  
+```python
+for t in reversed(range(num_inference_steps)):
+    # Предсказание шума моделью
+    noise_pred = unet(latent_sample, t, encoder_hidden_states)
+    # Обновление планировщиком
+    latent_sample = scheduler.step(noise_pred, t, latent_sample)
+```
 
-1. Install dependencies and activate the environment.
-2. Run `python download_models.py` to fetch models.
-3. Start the GUI (`run_isicgui.bat` on Windows or `python main.py`).
-4. Click “Select Models” and choose the `checkpoints` folder (created in step 2).
-5. Click “Select Output” and choose an empty or existing directory for generated images.
-6. Select device (CPU or CUDA). Optionally enable XAI Mode and set the “XAI steps” spin value.
-7. Choose classes and quantities; click “Start”. Use “Stop” to interrupt or “Regenerate” to repeat the last configuration.
-8. Inspect generated images and XAI overlays in the UI; open folders or images directly from the interface.
+</details>
 
-## Configuration and Paths
+***
 
-- Paths are resolved relative to the project root (directory of `main.py`), not the current working directory. The program can be launched from any folder.
-- Required directories are created on demand. Logs and caches are kept local to the project.
+## 🔍 Explainability (XAI) подробности
 
-## Troubleshooting
+### 📊 Методы интерпретации
 
-- GPU memory: reduce per-class quantities or switch to CPU if “CUDA out of memory” occurs.
-- Slow overlays: SHAP is approximate yet heavier than IG; expect extra latency when overlays are generated.
-- Rendering: the XAI subprocess uses a headless backend; images are saved even if an interactive display is unavailable.
+**Integrated Gradients (основной):**
 
-## Notes on diffusion/
+- Интеграция градиентов по прямолинейному пути от базового изображения
+- Удовлетворяет аксиомам Sensitivity и Implementation Invariance
+- Быстрое вычисление для каждого пикселя
 
-The `diffusion/` directory contains training and demonstration scripts. These files are provided for reference and replicability but are not required to run the GUI. No modifications to this folder are necessary for typical end users.
+**Приближенный SHAP:**
 
-## Citation
+- Основан на теории кооперативных игр и значениях Шэпли
+- Сэмплирование коалиций признаков для эффективности
+- Обеспечивает справедливое распределение важности
 
-If this software supports your research, please provide an appropriate citation acknowledging diffusion-based generation and attribution-based explainability.
+**Визуализация:**
 
+- Нормализованные атрибуции в виде тепловой карты
+- Альфа-блендинг с исходным изображением
+- Автоматическое сохранение наложений
 
 
+### ⚙️ Настройки XAI
+
+```python
+# Периодичность XAI анализа
+XAI_OVERLAY_INTERVAL = 10  # Каждое 10-е изображение
+
+# Настройки экспорта  
+XAI_SAVE_EVERY_N = 5       # Контролируется GUI спин-боксом
+
+# Классификатор
+backbone = ResNet18(num_classes=7)  # Адаптирован под ISIC классы
+```
+
+
+***
+
+## 🤝 Инструкция по использованию
+
+### 🎯 Пошаговое руководство
+
+1. **Подготовка окружения**
+
+```bash
+pip install -r requirements.txt
+python download_models.py
+```
+
+2. **Запуск и настройка**
+    - Запустите `run_isicgui.bat` (Windows) или `python main.py`
+    - Выберите папку `checkpoints` через "Select Models"
+    - Укажите папку вывода через "Select Output"
+3. **Конфигурация генерации**
+    - Выберите устройство (CPU/CUDA)
+    - Активируйте XAI Mode при необходимости
+    - Настройте "XAI steps" для детального экспорта
+4. **Генерация изображений**
+    - Отметьте нужные классы в левой панели
+    - Задайте количество изображений для каждого класса
+    - Нажмите "Start" для начала процесса
+5. **Анализ результатов**
+    - Просматривайте изображения в центральной области
+    - Изучайте XAI наложения при активированном режиме
+    - Открывайте папки и файлы через правую панель
+
+### 🏥 Для медицинских исследований
+
+```python
+# Рекомендуемые настройки для исследований
+RESEARCH_CONFIG = {
+    'base_seed': 42,              # Воспроизводимость
+    'inference_steps': 50,        # Качество vs скорость  
+    'xai_overlay_interval': 10,   # Частота XAI анализа
+    'device': 'cuda:0'            # При наличии GPU
+}
+```
+
+
+***
+
+## ⚙️ Конфигурация системы
+
+### 🔒 Управление ресурсами
+
+- **Память GPU:** Автоматическая очистка кеша после каждого изображения
+- **Воспроизводимость:** Детерминистские генераторы с фиксированными сидами
+- **Пути:** Все разрешаются относительно `main.py`, независимо от CWD
+- **Логирование:** Полные логи процесса в нижней консольной панели
+
+
+### 📁 Структура выходных данных
+
+```
+output_folder/
+├── MEL/                    # Подпапка класса меланомы
+│   ├── ISIC_0000001.png   # Синтетические изображения
+│   └── ISIC_0000002.png
+├── NV/                     # Подпапка невуса  
+│   └── ISIC_0000003.png
+├── synthetic_dataset.csv   # Метаданные всех изображений
+└── xai_overlays/          # XAI результаты (если активированы)
+```
+
+
+***
+
+## 🛠️ Устранение неполадок
+
+### 🔧 Частые проблемы
+
+| Проблема | Причина | Решение |
+| :-- | :-- | :-- |
+| **CUDA out of memory** | Нехватка GPU памяти | Уменьшить batch size или использовать CPU |
+| **Медленные XAI наложения** | SHAP ресурсоемкий | Отключить XAI Mode или увеличить интервал |
+| **Ошибки рендеринга** | Headless окружение | Автосохранение работает всегда |
+
+### 📋 Системные требования
+
+- **Python:** 3.8–3.11
+- **ОС:** Windows 10/11, macOS 10.15+, Ubuntu 18.04+
+- **RAM:** Минимум 8GB, рекомендуется 16GB+
+- **GPU:** Опционально NVIDIA с CUDA 11.0+ для ускорения
+
+***
+
+## 📚 Дополнительная информация
+
+### 🔬 О папке `diffusion/`
+
+Содержит справочный код обучения диффузионных моделей:
+
+- Не требуется для работы GUI
+- Предназначен для научной воспроизводимости
+- Может использоваться для дообучения на новых данных
+
+
+### 🎓 Научная основа
+
+Приложение реализует методологию, описанную в статье:
+> Трофимов Ю.В., Аверкин А.Н., Лопатин М.А., Трусов И.А.
+> "Объяснимые диффузионные модели для медицинской диагностики: временная атрибуция и каузальная валидация"
+
+***
+
+***
+
+## 🎓 Исследовательское финансирование
+
+<div align="center">
+
+### 🏛️ Государственная исследовательская инициатива
+
+**Работа выполнена в рамках государственного задания Министерства науки и высшего образования Российской Федерации (тема № 124112200072-2)**
+
+*Данное исследование проводится в рамках государственного задания Минобрнауки России, направленного на разработку доверенных ИИ систем для критически важных приложений.*
+
+</div>
+
+***
+
+## ⚠️ Важные уведомления
+
+### 🔒 Медицинская ответственность
+
+> **🚨 ИССЛЕДОВАТЕЛЬСКИЙ ИНСТРУМЕНТ**
+> Данное приложение предназначено исключительно для исследовательских целей. Синтетические изображения требуют валидации медицинскими экспертами перед любым клиническим использованием.
+
+### 📄 Лицензия и цитирование
+
+При использовании в научных работах просьба ссылаться на соответствующие публикации по диффузионным моделям и методам объяснимости.
+
+***
+
+<div align="center">
+
+**🎯 Генерируйте синтетические дерматологические данные с полной объяснимостью процесса**
+
+*Исследования -  Разработка -  Валидация*
