@@ -61,168 +61,190 @@ SYNT_ISIC/
 
 ### 1. Диффузионная модель (DDPM)
 
-**Прямой марковский процесс (добавление шума).** Для шага \(t=1,\dots,T\)
-\[
+**Прямой марковский процесс (добавление шума).** Для шага $t=1,\dots,T$
+
+$$
 q(x_t\mid x_{t-1})=\mathcal N\!\big(\sqrt{\alpha_t}\,x_{t-1},\,(1-\alpha_t)\mathbf I\big),\qquad 
 \alpha_t=1-\beta_t,\ \beta_t\in(0,1).
-\]
+$$
 
-**Замкнутая форма для любого \(t\).**
-\[
+**Замкнутая форма для любого $t$.**
+
+$$
 q(x_t\mid x_0)=\mathcal N\!\big(\sqrt{\bar\alpha_t}\,x_0,\,(1-\bar\alpha_t)\mathbf I\big),\quad
 \bar\alpha_t:=\prod_{s=1}^t\alpha_s,
-\]
-эквивалентная репараметризация: 
-\[
+$$
+
+эквивалентная репараметризация:
+
+$$
 x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,\varepsilon,\qquad \varepsilon\sim\mathcal N(0,\mathbf I).
-\]
+$$
 
 **Обратный (генеративный) процесс.**
-\[
+
+$$
 p_\theta(x_{t-1}\mid x_t)=\mathcal N\!\big(\mu_\theta(x_t,t),\,\Sigma_\theta(x_t,t)\big).
-\]
+$$
+
 Постериор прямого процесса
-\[
+
+$$
 q(x_{t-1}\mid x_t,x_0)=\mathcal N\!\big(\tilde\mu_t(x_t,x_0),\,\tilde\beta_t\mathbf I\big),
-\]
-где 
-\[
+$$
+
+где
+
+$$
 \tilde\beta_t=\frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}\,\beta_t,\qquad
 \tilde\mu_t=\frac{\sqrt{\bar\alpha_{t-1}}\beta_t}{1-\bar\alpha_t}\,x_0
 +\frac{\sqrt{\alpha_t}(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}\,x_t .
-\]
+$$
 
 **Параметризация через предсказание шума.**
-\[
+
+$$
 \mu_\theta(x_t,t)=\frac{1}{\sqrt{\alpha_t}}
-\bigg(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\;\varepsilon_\theta(x_t,t)\bigg),\qquad
-\hat x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\,\varepsilon_\theta(x_t,t)}{\sqrt{\bar\alpha_t}} .
-\]
-Обычно \(\Sigma_\theta=\tilde\beta_t\mathbf I\) (либо обучаемая дисперсия).
+\left(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\;\varepsilon_\theta(x_t,t)\right),\qquad
+\hat x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\,\varepsilon_\theta(x_t,t)}{\sqrt{\bar\alpha_t}}.
+$$
+
+Обычно $\Sigma_\theta=\tilde\beta_t\mathbf I$ (либо обучаемая дисперсия).
 
 **Функция потерь (упрощённая ELBO).**
-\[
+
+$$
 \mathcal L_{\mathrm{simple}}
 =\mathbb E_{t\sim\mathcal U\{1..T\},\,x_0,\,\varepsilon}
 \big\|\,\varepsilon-\varepsilon_\theta(\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\varepsilon,\,t)\,\big\|_2^2 .
-\]
+$$
 
 **Примечание (оптимизация Adam).** Обновление параметров
-\[
-\theta_{k+1}=\theta_k-\;lr\;\frac{\hat m_k}{\sqrt{\hat v_k}+\varepsilon}
-\]
-— добавка \(\varepsilon\) стоит **вне** квадратного корня.
+
+$$
+\theta_{к+1}=\theta_k-\;lr\;\frac{\hat m_k}{\sqrt{\hat v_k}+\varepsilon},
+$$
+
+то есть $\varepsilon$ **вне** квадратного корня.
 
 ---
 
 ### 2. UNet и временное внедрение
 
 Дискретное время кодируется синусоидальным вектором
-\[
+
+$$
 \gamma(t)=\big[\sin(\omega_0 t),\cos(\omega_0 t),\ldots,\sin(\omega_k t),\cos(\omega_k t),\ldots\big],\qquad
 \omega_k=10000^{-2k/d},
-\]
+$$
+
 который после MLP встраивается в блоки UNet через модульно-сдвиговую модуляцию (FiLM) поверх нормализации:
-\[
-h \;\leftarrow\; \mathrm{GN}(h)\cdot(1+s(t)) + b(t).
-\]
-В непрерывных вариантах возможно кодирование через \(\tau\propto\log\mathrm{SNR}(t)\).
+
+$$
+h \leftarrow \mathrm{GN}(h)\cdot(1+s(t)) + b(t).
+$$
+
+В непрерывных вариантах возможно кодирование через $\tau\propto\log\mathrm{SNR}(t)$.
 
 ---
 
 ### 3. Методы объяснимости (XAI)
 
-**Integrated Gradients (IG).** Для \(f:\mathbb R^n\!\to\!\mathbb R\), входа \(x\) и базовой точки \(x'\)
-\[
-\mathrm{IG}_i(x;x')=(x_i-x'_i)\int_0^1 
-\frac{\partial f\big(x'+\alpha(x-x')\big)}{\partial x_i}\,d\alpha,
-\qquad 
-\sum_i\mathrm{IG}_i=f(x)-f(x')\ \ (\text{полнота}).
-\]
+**Integrated Gradients (IG).** Для $f:\mathbb R^n\to\mathbb R$, входа $x$ и базовой точки $x'$
 
-**Значения Шэпли (SHAP).** Для множества признаков \(N=\{1,\dots,n\}\) и функции ценности \(v:\mathcal P(N)\to\mathbb R\)
-\[
-\phi_i=\!\!\sum_{S\subseteq N\setminus\{i\}}\!\!\frac{|S|!\,(n-|S|-1)!}{n!}
-\big[v(S\cup\{i\})-v(S)\big],
-\]
+$$
+\mathrm{IG}_i(x;x')=(x_i-x'_i)\int_0^1 
+\frac{\partial f\big(x'+\alpha(x-x')\big)}{\partial x_i}\,d\alpha,\qquad 
+\sum_i\mathrm{IG}_i=f(x)-f(x')\ \ (\text{полнота}).
+$$
+
+**Значения Шэпли (SHAP).** Для множества признаков $N=\{1,\dots,n\}$ и функции ценности $v:\mathcal P(N)\to\mathbb R$
+
+$$
+\phi_i=\sum_{S\subseteq N\setminus\{i\}}
+\frac{|S|!\,(n-|S|-1)!}{n!}\,[\,v(S\cup\{i\})-v(S)\,],
+$$
+
 удовлетворяют аксиомам **эффективности**, **симметрии**, **нулевого (фиктивного) игрока** и **аддитивности**.
 
 ---
 
 ### 4. Time-SHAP для шагов денойзинга
 
-**Игроки.** Временные шаги \(\{1,\dots,T\}\).
+**Игроки.** Временные шаги $\{1,\dots,T\}$.
 
 **Оценочный функционал.** Фиксируем 
-\[
+
+$$
 F(x)=\mathrm{logit}_{y^\*}(x),
-\]
-логит целевого класса \(y^\*\) (устойчив к калибровке вероятностей).
+$$
 
-**Функция ценности.** Для коалиции шагов \(S\subseteq\{1..T\}\)
-\[
+логит целевого класса $y^\*$ (устойчив к калибровке вероятностей).
+
+**Функция ценности.** Для коалиции шагов $S\subseteq\{1..T\}$
+
+$$
 v(S)=\mathbb E\Big[F\big(\mathrm{Dec}(x_T;S)\big)\Big],
-\]
-где \(\mathrm{Dec}(x_T;S)\) — денойзинг, применяющий стохастические переходы **только** на шагах из \(S\); 
-для \(\bar S\) используется нейтральная операция (заморозка/скип).
+$$
 
-**Значение Шэпли шага \(t\).**
-\[
-\phi_t=\!\!\sum_{S\subseteq \{1..T\}\setminus\{t\}}\!\!
-\frac{|S|!\,(T-|S|-1)!}{T!}\Big[v(S\cup\{t\})-v(S)\Big].
-\]
+где $\mathrm{Dec}(x_T;S)$ — денойзинг, применяющий стохастические переходы **только** на шагах из $S$; для $\bar S$ используется нейтральная операция (заморозка/скип).
+
+**Значение Шэпли шага $t$.**
+
+$$
+\phi_t=\sum_{S\subseteq \{1..T\}\setminus\{t\}}
+\frac{|S|!\,(T-|S|-1)!}{T!}\,[\,v(S\cup\{t\})-v(S)\,].
+$$
 
 **Непредвзятая оценка (пермутациями).**
-\[
+
+$$
 \phi_t \approx \frac{1}{M}\sum_{m=1}^M
-\Big[\,v\big(\mathrm{Pref}_{\pi_m}(t)\cup\{t\}\big)-v\big(\mathrm{Pref}_{\pi_m}(t)\big)\,\Big],
-\qquad \pi_m\sim\mathrm{Uniform}(\mathfrak S_T).
-\]
+\Big[\,v\big(\mathrm{Pref}_{\pi_m}(t)\cup\{t\}\big)-v\big(\mathrm{Pref}_{\pi_m}(t)\big)\,\Big],\qquad 
+\pi_m\sim \mathrm{Uniform}(\mathfrak S_T).
+$$
 
-**Пиксельный уровень.** \(\phi_{t,i,j}\) — вклад шага \(t\) в пиксель \((i,j)\); 
-агрегированная карта важности \(A_{i,j}=\sum_{t=1}^T w_t\,\phi_{t,i,j}\) (например, \(w_t\equiv T^{-1}\)).
+**Пиксельный уровень.** $\phi_{t,i,j}$ — вклад шага $t$ в пиксель $(i,j)$; агрегированная карта важности $A_{i,j}=\sum_{t=1}^T w_t\,\phi_{t,i,j}$ (например, $w_t\equiv T^{-1}$).
 
-**Теоретическая корректность.** Для определённого выше \(v\) значения \(\{\phi_t\}\) удовлетворяют аксиомам 
-**эффективности** \(\big(\sum_t\phi_t=v(\{1..T\})-v(\varnothing)\big)\),
-**симметрии**, **нулевого (фиктивного) шага** 
-\(\big(v(S\cup\{t\})=v(S)\Rightarrow \phi_t=0\big)\) и **аддитивности**.
+**Теоретическая корректность.** Для определённого выше $v$ значения $\{\phi_t\}$ удовлетворяют аксиомам **эффективности** $\big(\sum_t\phi_t=v(\{1..T\})-v(\varnothing)\big)$, **симметрии**, **нулевого (фиктивного) шага** $\big(v(S\cup\{t\})=v(S)\Rightarrow \phi_t=0\big)$ и **аддитивности**.
 
-**Сложность и концентрация.** Пусть маржинальный вклад в оценке по пермутациям ограничен диапазоном длины \(R\).
-Тогда по Хёффдингу
-\[
+**Сложность и концентрация.** Если маржинальный вклад ограничен диапазоном длины $R$, то по Хёффдингу
+
+$$
 \Pr\!\left(|\hat\phi_t-\phi_t|\ge\varepsilon\right)\le 
 2\exp\!\left(-\frac{2M\varepsilon^2}{R^2}\right)
 \quad\Rightarrow\quad
 M\ \ge\ \frac{R^2}{2\varepsilon^2}\,\ln\frac{2}{\delta}.
-\]
+$$
 
 ---
 
 ### 5. Каузальная валидация атрибуций (CSI)
 
-Пусть \(\mathcal R_{\mathrm{top}}\) — маска топ-\(p\%\) пикселей по важности (по \(A_{i,j}\)),
-\(\mathcal R_{\mathrm{bottom}}\) — нижние \(p\%\).
-Интервенция \(\mathsf{do}_\delta(\cdot;\mathcal R)\) модифицирует **только** область \(\mathcal R\) 
-(шум \( \mathcal N(0,\delta^2)\), гауссово размытие \(g_\delta\!\ast\!\cdot\), перестановка патчей, 
-или константа — медиана по \(\mathcal R\)).
+Пусть $\mathcal R_{\mathrm{top}}$ — маска топ-$p\%$ пикселей по важности (по $A_{i,j}$), а $\mathcal R_{\mathrm{bottom}}$ — нижние $p\%$. Интервенция $\mathsf{do}_\delta(\cdot;\mathcal R)$ модифицирует **только** область $\mathcal R$ (шум $\mathcal N(0,\delta^2)$, гауссово размытие $g_\delta\!\ast\!\cdot$, перестановка патчей или константа — медиана по $\mathcal R$).
 
 **Эффект на модели (логит-сдвиг).**
-\[
+
+$$
 \Delta_F(x;\mathcal R,\delta)=\big|\,F(x)-F\big(\mathsf{do}_\delta(x;\mathcal R)\big)\,\big|.
-\]
+$$
 
 **Causal Shift Index.**
-\[
+
+$$
 \mathrm{CSI}=\mathbb E_x\big[\Delta_F(x;\mathcal R_{\mathrm{top}},\delta)\big]-
 \mathbb E_x\big[\Delta_F(x;\mathcal R_{\mathrm{bottom}},\delta)\big].
-\]
+$$
 
 **Статистическая проверка.** Значимость различий оценивается t-критерием Уэлча:
-\[
+
+$$
 t=\frac{\bar\Delta_{\mathrm{top}}-\bar\Delta_{\mathrm{bottom}}}
-{\sqrt{\;s^2_{\mathrm{top}}/n_{\mathrm{top}}+s^2_{\mathrm{bottom}}/n_{\mathrm{bottom}}}}\!,
-\]
-с степенями свободы по формуле Уэлча–Саттертуэйта; альтернативно — перестановочный/бутстреп-тест.
+{\sqrt{\,s^2_{\mathrm{top}}/n_{\mathrm{top}}+s^2_{\mathrm{bottom}}/n_{\mathrm{bottom}}\,}},
+$$
+
+со степенями свободы по формуле Уэлча–Саттертуэйта; альтернативно — перестановочный/бутстреп-тест.
+
 
 
 
