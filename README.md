@@ -64,33 +64,33 @@ SYNT_ISIC/
 **Прямой марковский процесс (добавление шума).** Для шага $t=1,\dots,T$
 
 $$
-q(x_t\mid x_{t-1})=\mathcal N\!\big(\sqrt{\alpha_t}\,x_{t-1},\,(1-\alpha_t)\mathbf I\big),\qquad 
+q(x_t\mid x_{t-1})=\mathcal N\big(\sqrt{\alpha_t}\,x_{t-1},(1-\alpha_t)\mathbf I\big),\qquad 
 \alpha_t=1-\beta_t,\ \beta_t\in(0,1).
 $$
 
 **Замкнутая форма для любого $t$.**
 
 $$
-q(x_t\mid x_0)=\mathcal N\!\big(\sqrt{\bar\alpha_t}\,x_0,\,(1-\bar\alpha_t)\mathbf I\big),\quad
+q(x_t\mid x_0)=\mathcal N\big(\sqrt{\bar\alpha_t}\,x_0,(1-\bar\alpha_t)\mathbf I\big),\quad
 \bar\alpha_t:=\prod_{s=1}^t\alpha_s,
 $$
 
 эквивалентная репараметризация:
 
 $$
-x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,\varepsilon,\qquad \varepsilon\sim\mathcal N(0,\mathbf I).
+x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\varepsilon,\qquad \varepsilon\sim\mathcal N(0,\mathbf I).
 $$
 
 **Обратный (генеративный) процесс.**
 
 $$
-p_\theta(x_{t-1}\mid x_t)=\mathcal N\!\big(\mu_\theta(x_t,t),\,\Sigma_\theta(x_t,t)\big).
+p_\theta(x_{t-1}\mid x_t)=\mathcal N\big(\mu_\theta(x_t,t),\Sigma_\theta(x_t,t)\big).
 $$
 
 Постериор прямого процесса
 
 $$
-q(x_{t-1}\mid x_t,x_0)=\mathcal N\!\big(\tilde\mu_t(x_t,x_0),\,\tilde\beta_t\mathbf I\big),
+q(x_{t-1}\mid x_t,x_0)=\mathcal N\big(\tilde\mu_t(x_t,x_0),\tilde\beta_t\mathbf I\big),
 $$
 
 где
@@ -115,17 +115,16 @@ $$
 
 $$
 \mathcal L_{\mathrm{simple}}
-=\mathbb E_{t\sim\mathcal U\{1..T\},\,x_0,\,\varepsilon}
-\big\|\,\varepsilon-\varepsilon_\theta(\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\varepsilon,\,t)\,\big\|_2^2 .
+=\mathbb E_{t\sim\mathcal U\{1..T\},x_0,\varepsilon}
+\big\|\,\varepsilon-\varepsilon_\theta(\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\varepsilon,t)\,\big\|_2^2 .
 $$
 
 **Примечание (оптимизация Adam).** Обновление параметров
 
 $$
-\theta_{к+1}=\theta_k-\;lr\;\frac{\hat m_k}{\sqrt{\hat v_k}+\varepsilon},
+\theta_{к+1}=\theta_k-lr\frac{\hat m_k}{\sqrt{\hat v_k}+\varepsilon},
 $$
 
-то есть $\varepsilon$ **вне** квадратного корня.
 
 ---
 
