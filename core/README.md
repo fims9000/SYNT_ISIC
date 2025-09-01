@@ -1,4 +1,4 @@
-# Core Package - ISIC Generator Infrastructure
+# Core Package - ISIC Generator Infrastructure.
 
 Основной пакет инфраструктуры для генерации синтетических данных ISIC.
 
