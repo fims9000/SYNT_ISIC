@@ -1,0 +1,65 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "SYNT_ISIC: Synthetic Dermatology Images with Explainable AI"
+version: "v1.0.0"
+release-date: "2025-08-01"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.17041971"
+  - type: url
+    value: "https://doi.org/10.5281/zenodo.17041971"
+repository-code: "https://github.com/fims9000/SYNT_ISIC"
+license: "MIT"
+
+authors:
+  - family-names: "Trofimov"
+    given-names: "Yuri"
+    orcid: "https://orcid.org/0009-0005-6943-7432"
+  - family-names: "Ilin"
+    given-names: "Andrei"
+    orcid: "https://orcid.org/0009-0007-9599-4958"
+  - family-names: "Lebedev"
+    given-names: "Alexander"
+    orcid: "https://orcid.org/0009-0001-1046-5982"
+  - family-names: "Averkin"
+    given-names: "Aleksey"
+    orcid: "https://orcid.org/0000-0003-1571-3583"
+  - family-names: "Lopatin"
+    given-names: "Maxim"
+    orcid: "https://orcid.org/0009-0009-1259-3740"
+  - family-names: "Trusov"
+    given-names: "Ivan"
+    orcid: "https://orcid.org/0009-0006-2409-7072"
+
+abstract: >
+  SYNT_ISIC is a research-oriented software package for synthetic generation of dermatological
+  images using diffusion models with integrated explainable AI (XAI) methods.
+  It provides Time-SHAP, Integrated Gradients, SHAP, and Causal Shift Index (CSI)
+  for attribution and causal validation of the generation process.
+  The tool is intended solely for research purposes and is not a medical product.
+
+preferred-citation:
+  type: article
+  title: "SYNT_ISIC: Synthetic Dermatology Images with Explainable AI v1.0.0"
+  authors:
+    - family-names: "Trofimov"
+      given-names: "Yuri"
+      orcid: "https://orcid.org/0009-0005-6943-7432"
+    - family-names: "Ilin"
+      given-names: "Andrei"
+      orcid: "https://orcid.org/0009-0007-9599-4958"
+    - family-names: "Lebedev"
+      given-names: "Alexander"
+      orcid: "https://orcid.org/0009-0001-1046-5982"
+    - family-names: "Averkin"
+      given-names: "Aleksey"
+      orcid: "https://orcid.org/0000-0003-1571-3583"
+    - family-names: "Lopatin"
+      given-names: "Maxim"
+      orcid: "https://orcid.org/0009-0009-1259-3740"
+    - family-names: "Trusov"
+      given-names: "Ivan"
+      orcid: "https://orcid.org/0009-0006-2409-7072"
+    year: 2025
+  doi: "10.5281/zenodo.17041971"
+  url: "https://doi.org/10.5281/zenodo.17041971"
