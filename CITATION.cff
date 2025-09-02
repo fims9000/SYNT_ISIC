@@ -2,12 +2,14 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "SYNT_ISIC: Synthetic Dermatology Images with Explainable AI"
 version: "v1.0.0"
-release-date: "2025-08-01"
+date-released: "2025-08-01"
+
 identifiers:
   - type: doi
     value: "10.5281/zenodo.17041971"
   - type: url
     value: "https://doi.org/10.5281/zenodo.17041971"
+
 repository-code: "https://github.com/fims9000/SYNT_ISIC"
 license: "MIT"
 
@@ -60,6 +62,7 @@ preferred-citation:
     - family-names: "Trusov"
       given-names: "Ivan"
       orcid: "https://orcid.org/0009-0006-2409-7072"
-    year: 2025
+  year: 2025
   doi: "10.5281/zenodo.17041971"
   url: "https://doi.org/10.5281/zenodo.17041971"
+
