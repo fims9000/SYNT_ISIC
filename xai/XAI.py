@@ -584,8 +584,14 @@ def load_ddpm_model_for_class(class_name, verbose=True):
         scheduler = create_ddpm_scheduler()
         
         # Путь к модели
-        model_file = DDPM_MODELS[class_name]
-        model_path = CHECKPOINTS_DIR / model_file
+        # Разрешаем переопределение точного пути к модели из окружения (для побитового совпадения)
+        override_path = os.environ.get('XAI_DDPM_MODEL_PATH', '').strip()
+        if override_path:
+            model_path = Path(override_path)
+            model_file = model_path.name  # Имя файла для логирования
+        else:
+            model_file = DDPM_MODELS[class_name]
+            model_path = CHECKPOINTS_DIR / model_file
         
         if not model_path.exists():
             print(f"❌ Файл модели не найден: {model_path}")
@@ -702,16 +708,26 @@ def generate_trajectory_optimized(unet_model, scheduler,
     
     print(f"🎬 Генерация диффузионной траектории для класса '{TARGET_CLASS_NAME}'...")
     
-    # Настройка воспроизводимости
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
+    # Настройка воспроизводимости и создание локального генератора
+    # Используем локальный torch.Generator, чтобы состояние глобального RNG не влияло на начальный шум
+    try:
+        torch_gen = torch.Generator(device=device)
+        torch_gen.manual_seed(int(seed))
+    except Exception:
+        # Фолбэк: установим глобальные сиды
+        torch.manual_seed(int(seed))
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(int(seed))
+            torch.cuda.manual_seed_all(int(seed))
+        torch_gen = None
+    np.random.seed(int(seed))
     
-    # Создание начального шума
+    # Создание начального шума (совместимо с генерацией в core)
     shape = (1, DDPM_CHANNELS, DDPM_IMAGE_SIZE, DDPM_IMAGE_SIZE)
-    initial_noise = torch.randn(shape, device=device, dtype=torch.float32)
+    if torch_gen is not None:
+        initial_noise = torch.randn(shape, device=device, dtype=torch.float32, generator=torch_gen)
+    else:
+        initial_noise = torch.randn(shape, device=device, dtype=torch.float32)
     
     print(f"🔢 Параметры генерации:")
     print(f"   Шаги: {num_inference_steps}, сохранять каждый: {save_every}")
@@ -722,6 +738,14 @@ def generate_trajectory_optimized(unet_model, scheduler,
     # Настройка scheduler
     scheduler.set_timesteps(num_inference_steps, device=device)
     timesteps = scheduler.timesteps
+
+    # Диагностика: печатаем первый и последний t, чтобы убедиться в направлении
+    try:
+        t0 = float(timesteps[0])
+        t_last = float(timesteps[-1])
+        print(f"🧭 Timesteps dir: first={t0:.0f} last={t_last:.0f} (ожидается start≈999 → last=0)")
+    except Exception:
+        pass
     
     # Определение шагов для сохранения
     # Режим 1: обычный (каждые save_every по индексу шага)
@@ -922,7 +946,7 @@ if XAI_READY:
         num_inference_steps=INFERENCE_STEPS,
         save_every=SAVE_EVERY_N_STEPS,
         seed=GENERATION_SEED,
-        use_autocast=True
+        use_autocast=False
     )
     
     if trajectory is not None:

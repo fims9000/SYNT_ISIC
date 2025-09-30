@@ -52,7 +52,10 @@ class ConfigManager:
                 "image_size": 128,
                 "train_timesteps": 1000,
                 "inference_timesteps": 50,
-                "batch_size": 1
+                "batch_size": 1,
+                "seed_mode": "random",  # "random" или "fixed"
+                "seed_value": 42,
+                "xai_frequency": 1
             },
             "ui": {
                 "theme": "light",
@@ -123,9 +126,11 @@ class ConfigManager:
             raise KeyError(f"Неизвестный ключ пути: {path_key}")
         return self.config["paths"][path_key]
     
-    def get_generation_param(self, param_key: str) -> Any:
+    def get_generation_param(self, param_key: str, default: Any = None) -> Any:
         """Получает параметр генерации по ключу"""
         if param_key not in self.config["generation"]:
+            if default is not None:
+                return default
             raise KeyError(f"Неизвестный параметр генерации: {param_key}")
         return self.config["generation"][param_key]
     
@@ -151,10 +156,7 @@ class ConfigManager:
         self._save_config()
     
     def update_generation_param(self, param_key: str, new_value: Any):
-        """Обновляет параметр генерации"""
-        if param_key not in self.config["generation"]:
-            raise KeyError(f"Неизвестный параметр генерации: {param_key}")
-        
+        """Обновляет параметр генерации (создаёт новый, если не существует)"""
         self.config["generation"][param_key] = new_value
         self._save_config()
     

@@ -1,291 +1,124 @@
-"""
-Logger - система логирования для ISIC Generator
-"""
+# -*- coding: utf-8 -*-
+from __future__ import annotations
 
 import logging
-import logging.handlers
-import os
+import sys
 from datetime import datetime
-from typing import Optional, Dict, Any, Union
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Optional, Callable
+
+DEFAULT_LOGGER_NAME = "ISICGenerator"
 
 class Logger:
-    """Система логирования для ISIC Generator"""
-    
-    def __init__(self, name: str = "ISICGenerator", log_dir: str = "core/logs"):
-        """
-        Инициализация логгера
-        
-        Args:
-            name: Имя логгера
-            log_dir: Директория для логов
-        """
-        self.name = name
-        # Разрешаем путь логов относительно корня проекта, если путь относительный
-        project_root = Path(__file__).resolve().parents[2]
-        self.log_dir = Path(log_dir) if os.path.isabs(log_dir) else (project_root / log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Создаем основной логгер
-        self.logger = logging.getLogger(name)
-        self.logger.setLevel(logging.DEBUG)
-        
-        # Очищаем существующие хендлеры
-        self.logger.handlers.clear()
-        
-        # Настраиваем форматирование
-        self._setup_formatters()
-        
-        # Настраиваем хендлеры
-        self._setup_handlers()
-        
-        # Словарь для хранения дополнительных логгеров
-        self.special_loggers = {}
-        
-    def _setup_formatters(self):
-        """Настраивает форматирование логов"""
-        # Подробный формат для файлов
-        self.detailed_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        # Простой формат для консоли
-        self.simple_formatter = logging.Formatter(
-            '%(levelname)s - %(message)s'
-        )
-        
-        # Формат для GUI
-        self.gui_formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s',
-            datefmt='%H:%M:%S'
-        )
-    
-    def _setup_handlers(self):
-        """Настраивает хендлеры для логгера"""
-        # Хендлер для основного файла логов
-        main_log_file = self.log_dir / "generator.log"
-        main_handler = logging.handlers.RotatingFileHandler(
-            main_log_file,
-            maxBytes=10*1024*1024,  # 10 MB
-            backupCount=5,
-            encoding='utf-8'
-        )
-        main_handler.setLevel(logging.DEBUG)
-        main_handler.setFormatter(self.detailed_formatter)
-        self.logger.addHandler(main_handler)
-        
-        # Хендлер для консоли
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(self.simple_formatter)
-        self.logger.addHandler(console_handler)
-        
-        # Хендлер для ошибок
-        error_log_file = self.log_dir / "errors.log"
-        error_handler = logging.handlers.RotatingFileHandler(
-            error_log_file,
-            maxBytes=5*1024*1024,  # 5 MB
-            backupCount=3,
-            encoding='utf-8'
-        )
-        error_handler.setLevel(logging.ERROR)
-        error_handler.setFormatter(self.detailed_formatter)
-        self.logger.addHandler(error_handler)
-        
-        # Хендлер для GUI (будет настроен позже)
-        self.gui_handler = None
-    
-    def setup_gui_handler(self, text_widget):
-        """
-        Настраивает хендлер для отображения логов в GUI
-        
-        Args:
-            text_widget: Виджет для отображения логов (QTextEdit)
-        """
-        from PyQt5.QtCore import QObject, pyqtSignal
-        
-        class QTextEditHandler(logging.Handler, QObject):
-            log_message = pyqtSignal(str)
-            
-            def __init__(self, text_widget):
-                logging.Handler.__init__(self)
-                QObject.__init__(self)
-                self.text_widget = text_widget
-                self.log_message.connect(self._append_log)
-            
-            def emit(self, record):
-                msg = self.format(record)
-                self.log_message.emit(msg)
-            
-            def _append_log(self, message):
-                if hasattr(self.text_widget, 'append'):
-                    self.text_widget.append(message)
-        
-        # Удаляем старый GUI хендлер если есть
-        if self.gui_handler:
-            self.logger.removeHandler(self.gui_handler)
-        
-        # Создаем новый GUI хендлер
-        self.gui_handler = QTextEditHandler(text_widget)
-        self.gui_handler.setLevel(logging.INFO)
-        self.gui_handler.setFormatter(self.gui_formatter)
-        self.logger.addHandler(self.gui_handler)
-    
-    def get_special_logger(self, name: str, log_file: str = None) -> logging.Logger:
-        """
-        Получает специальный логгер для конкретной задачи
-        
-        Args:
-            name: Имя логгера
-            log_file: Имя файла для логов (опционально)
-        
-        Returns:
-            Специальный логгер
-        """
-        if name in self.special_loggers:
-            return self.special_loggers[name]
-        
-        # Создаем новый логгер
-        special_logger = logging.getLogger(f"{self.name}.{name}")
-        special_logger.setLevel(logging.DEBUG)
-        
-        # Настраиваем файл для специального логгера
-        if log_file:
-            log_path = self.log_dir / log_file
-            handler = logging.handlers.RotatingFileHandler(
-                log_path,
-                maxBytes=5*1024*1024,  # 5 MB
-                backupCount=3,
-                encoding='utf-8'
-            )
-            handler.setLevel(logging.DEBUG)
-            handler.setFormatter(self.detailed_formatter)
-            special_logger.addHandler(handler)
-        
-        self.special_loggers[name] = special_logger
-        return special_logger
-    
-    def log_generation_start(self, class_name: str, count: int, output_dir: str):
-        """Логирует начало генерации"""
-        self.logger.info(f"Генерация начата: {class_name} x{count} -> {output_dir}")
-    
-    def log_generation_progress(self, class_name: str, current: int, total: int):
-        """Логирует прогресс генерации"""
-        percentage = (current / total) * 100
-        self.logger.info(f"📊 Прогресс {class_name}: {current}/{total} ({percentage:.1f}%)")
-    
-    def log_generation_complete(self, class_name: str, count: int, output_dir: str):
-        """Логирует завершение генерации"""
-        self.logger.info(f"Генерация завершена: {class_name} x{count} -> {output_dir}")
-    
-    def log_error(self, error: Union[Exception, str], context: str = "", include_traceback: Optional[bool] = None):
-        """Логирует ошибку.
+    """
+    Универсальный логгер проекта.
+    Совместим со старыми вызовами: log_info, log_warning, log_error, log_debug.
+    Пишет в консоль и (опционально) в файл. Можно подвесить GUI‑коллбек.
+    """
 
-        Args:
-            error: Объект исключения или строковое сообщение
-            context: Дополнительный контекст
-            include_traceback: Управление добавлением traceback.
-                По умолчанию: True, если передан Exception; иначе False.
-        """
-        is_exc = isinstance(error, BaseException)
-        msg = f"ОШИБКА {context}: {str(error)}" if context else f"ОШИБКА: {str(error)}"
-        if include_traceback is None:
-            include_traceback = bool(is_exc)
-        self.logger.error(msg, exc_info=include_traceback)
-    
-    def log_warning(self, message: str):
-        """Логирует предупреждение"""
-        self.logger.warning(f"⚠️  {message}")
-    
-    def log_info(self, message: str):
-        """Логирует информационное сообщение"""
-        self.logger.info(f"ИНФО: {message}")
-    
-    def log_debug(self, message: str):
-        """Логирует отладочное сообщение"""
-        self.logger.debug(f"🔍 {message}")
-    
-    def log_success(self, message: str):
-        """Логирует успешное выполнение"""
-        self.logger.info(f"УСПЕХ: {message}")
-    
-    def log_config_change(self, setting: str, old_value: Any, new_value: Any):
-        """Логирует изменение конфигурации"""
-        self.logger.info(f"⚙️  Конфигурация изменена: {setting} = {old_value} -> {new_value}")
-    
-    def log_model_loaded(self, class_name: str, model_path: str):
-        """Логирует загрузку модели"""
-        self.logger.info(f"Модель загружена: {class_name} <- {model_path}")
-    
-    def log_model_error(self, class_name: str, error: str):
-        """Логирует ошибку загрузки модели"""
-        self.logger.error(f"Ошибка загрузки модели {class_name}: {error}")
-    
-    def cleanup_old_logs(self, days_to_keep: int = 30):
-        """Очищает старые логи"""
+    def __init__(
+        self,
+        name: str = DEFAULT_LOGGER_NAME,
+        log_dir: Optional[str] = None,
+        log_file: Optional[str] = None,
+        level: int = logging.INFO,
+        max_bytes: int = 2 * 1024 * 1024,
+        backup_count: int = 3,
+    ) -> None:
+        self.name = name
+        self._callback: Optional[Callable[[str], None]] = None
+
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(level)
+        self.logger.propagate = False  # чтобы не дублировать в root
+
+        # Форматтер единый для всех хендлеров
+        fmt = logging.Formatter(
+            fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%%Y-%%m-%%d %%H:%%M:%%S",
+        )
+
+        # Консоль
+        if not any(isinstance(h, logging.StreamHandler) for h in self.logger.handlers):
+            sh = logging.StreamHandler(sys.stdout)
+            sh.setLevel(level)
+            sh.setFormatter(fmt)
+            self.logger.addHandler(sh)
+
+        # Файл
         try:
-            cutoff_date = datetime.now().timestamp() - (days_to_keep * 24 * 3600)
-            
-            for log_file in self.log_dir.glob("*.log*"):
-                if log_file.stat().st_mtime < cutoff_date:
-                    log_file.unlink()
-                    self.logger.info(f"🗑️  Удален старый лог: {log_file.name}")
-        except Exception as e:
-            self.logger.error(f"Ошибка очистки старых логов: {e}")
-    
-    def get_log_summary(self) -> Dict[str, Any]:
-        """Получает сводку по логам"""
+            if log_file is None:
+                # если не передали, но указан каталог — лог туда; иначе рядом с исполняемым
+                base_dir = Path(log_dir) if log_dir else Path.cwd()
+                base_dir.mkdir(parents=True, exist_ok=True)
+                log_file = str(base_dir / "app.log")
+            fh = RotatingFileHandler(log_file, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
+            fh.setLevel(level)
+            fh.setFormatter(fmt)
+            # избегаем дублирования файлового хендлера при повторной инициализации
+            if not any(isinstance(h, RotatingFileHandler) for h in self.logger.handlers):
+                self.logger.addHandler(fh)
+        except Exception:
+            # не падаем, если нет прав на запись
+            pass
+
+    # --- Совместимые методы ---
+    def log_info(self, msg: str) -> None:
+        self._emit(logging.INFO, msg)
+
+    def log_warning(self, msg: str) -> None:
+        self._emit(logging.WARNING, msg)
+
+    def log_error(self, msg: str) -> None:
+        self._emit(logging.ERROR, msg)
+
+    def log_debug(self, msg: str) -> None:
+        self._emit(logging.DEBUG, msg)
+
+    # --- Дополнительно ---
+    def set_gui_callback(self, cb: Callable[[str], None]) -> None:
+        """Регистрирует коллбек GUI; он будет получать готовую строку лога."""
+        self._callback = cb
+
+    def setup_gui_handler(self, text_widget):
+        """Привязывает вывод логов к QTextEdit в GUI."""
         try:
-            main_log_file = self.log_dir / "generator.log"
-            if not main_log_file.exists():
-                return {"error": "Файл логов не найден"}
-            
-            # Подсчитываем количество строк по уровням
-            level_counts = {"INFO": 0, "WARNING": 0, "ERROR": 0, "DEBUG": 0}
-            
-            with open(main_log_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    for level in level_counts:
-                        if f" - {level} - " in line:
-                            level_counts[level] += 1
-                            break
-            
-            # Получаем размер файла
-            file_size_mb = main_log_file.stat().st_size / (1024 * 1024)
-            
-            return {
-                "total_lines": sum(level_counts.values()),
-                "level_counts": level_counts,
-                "file_size_mb": round(file_size_mb, 2),
-                "last_modified": datetime.fromtimestamp(main_log_file.stat().st_mtime).isoformat()
-            }
-        except Exception as e:
-            return {"error": f"Ошибка чтения сводки логов: {e}"}
-    
-    def set_level(self, level: str):
-        """Устанавливает уровень логирования"""
-        level_map = {
-            "DEBUG": logging.DEBUG,
-            "INFO": logging.INFO,
-            "WARNING": logging.WARNING,
-            "ERROR": logging.ERROR,
-            "CRITICAL": logging.CRITICAL
-        }
-        
-        if level.upper() in level_map:
-            self.logger.setLevel(level_map[level.upper()])
-            self.log_info(f"Уровень логирования изменен на: {level.upper()}")
-        else:
-            self.log_warning(f"Неизвестный уровень логирования: {level}")
-    
-    def close(self):
-        """Закрывает все хендлеры"""
-        for handler in self.logger.handlers[:]:
-            handler.close()
-            self.logger.removeHandler(handler)
-        
-        for special_logger in self.special_loggers.values():
-            for handler in special_logger.handlers[:]:
-                handler.close()
-                special_logger.removeHandler(handler)
+            def gui_callback(line: str):
+                try:
+                    text_widget.append(line)
+                except Exception:
+                    pass
+            self.set_gui_callback(gui_callback)
+        except Exception:
+            pass
+
+    def get_logger(self) -> logging.Logger:
+        """Доступ к нативному logging.Logger при необходимости."""
+        return self.logger
+
+    # --- Внутреннее ---
+    def _emit(self, level: int, msg: str) -> None:
+        try:
+            if level == logging.INFO:
+                self.logger.info(msg)
+            elif level == logging.WARNING:
+                self.logger.warning(msg)
+            elif level == logging.ERROR:
+                self.logger.error(msg)
+            elif level == logging.DEBUG:
+                self.logger.debug(msg)
+            else:
+                self.logger.log(level, msg)
+        finally:
+            if self._callback is not None:
+                try:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    level_name = logging.getLevelName(level)
+                    line = f"{ts} - {self.name} - {level_name} - {msg}"
+                    self._callback(line)
+                except Exception:
+                    # GUI не должен ломать логирование
+                    pass
+
+__all__ = ["Logger"]

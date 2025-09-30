@@ -13,11 +13,13 @@ from typing import Dict, List, Tuple, Optional, Callable, Any
 from PIL import Image
 from tqdm import tqdm
 from diffusers import UNet2DModel, DDPMScheduler
+from datetime import datetime
 
-from ..config import ConfigManager
-from ..utils import PathManager, Logger
-from ..cache import CacheManager
-from .model_manager import ModelManager
+from core.config.config_manager import ConfigManager
+from core.utils.path_manager import PathManager
+from core.utils.logger import Logger
+from core.cache.cache_manager import CacheManager
+from core.generator.model_manager import ModelManager
 
 
 class ImageGenerator:
@@ -45,7 +47,12 @@ class ImageGenerator:
         self.is_generating = False
         self.stop_requested = False
         
-        # XAI hook (необязательный): вызывается для каждого N-го изображения
+        # XAI интеграция: параметры для интегрированного анализа
+        self.xai_frequency: int = 3  # каждое N-ое изображение в классе
+        self.save_trajectory: bool = True  # сохранять ли траекторию в кеш
+        self.xai_analyzer = None  # экземпляр XAI анализатора
+        
+        # XAI hook (устаревший, оставлен для совместимости)
         self.xai_hook: Optional[Callable[[str, str], None]] = None
         self.xai_every_n: int = 10
 
@@ -89,6 +96,24 @@ class ImageGenerator:
         """
         self.xai_hook = callback
         self.xai_every_n = max(1, int(every_n))
+    
+    def set_xai_frequency(self, frequency: int):
+        """Устанавливает частоту XAI анализа (каждое N-ое изображение в классе)"""
+        self.xai_frequency = max(1, int(frequency))
+        self._log_message(f"XAI frequency установлен: каждое {self.xai_frequency}-е изображение в классе")
+    
+    def set_save_trajectory(self, save: bool):
+        """Включает/выключает сохранение траектории в кеш"""
+        self.save_trajectory = bool(save)
+        self._log_message(f"Сохранение траектории: {'включено' if save else 'выключено'}")
+    
+    def set_xai_analyzer(self, analyzer):
+        """Устанавливает экземпляр XAI анализатора для интегрированного анализа"""
+        self.xai_analyzer = analyzer
+        if analyzer:
+            self._log_message("XAI анализатор установлен для интегрированного анализа")
+        else:
+            self._log_message("XAI анализатор отключен")
 
     def set_generation_seed(self, seed: Optional[int]):
         """Устанавливает базовый seed для генерации.
@@ -285,8 +310,12 @@ class ImageGenerator:
                             progress_offset_units: int = 0,
                             progress_total_units: int = 0,
                             overall_index: int = 0,
-                            overall_total: int = 0) -> bool:
-        """Генерирует одно изображение для указанного класса"""
+                            overall_total: int = 0) -> Tuple[bool, Optional[List[torch.Tensor]]]:
+        """Генерирует одно изображение для указанного класса
+        
+        Returns:
+            Tuple[bool, Optional[List[torch.Tensor]]]: (успех, траектория или None)
+        """
         try:
             if self.stop_requested:
                 return False
@@ -350,9 +379,19 @@ class ImageGenerator:
                     noise = torch.randn(1, 3, 128, 128, device=self.device, generator=torch_gen)
                 else:
                     noise = torch.randn(1, 3, 128, 128, device=self.device)
+                # Считаем хэш исходного шума для воспроизводимости (без сохранения самих данных)
+                try:
+                    noise_hash = None
+                    _noise_cpu = noise.detach().to('cpu')
+                    import hashlib
+                    noise_hash = hashlib.sha256(_noise_cpu.numpy().tobytes()).hexdigest()[:16]
+                except Exception:
+                    noise_hash = None
                 
-                # Процесс денойзинга
+                # Процесс денойзинга с сохранением траектории
                 latents = noise
+                trajectory = [] if self.save_trajectory else None
+                
                 for step_idx, t in enumerate(scheduler.timesteps):
                     if self.stop_requested:
                         return False
@@ -362,6 +401,23 @@ class ImageGenerator:
                     
                     # Обновляем латент
                     latents = scheduler.step(noise_pred, t, latents).prev_sample
+                    
+                    # Сохраняем траекторию в кеш (если включено)
+                    if self.save_trajectory and trajectory is not None:
+                        trajectory.append(latents.clone().detach())
+                        
+                        # Логирование траектории
+                        if step_idx == 0:  # Первый шаг
+                            self._log_message(f"TRAJECTORY: Начало сохранения траектории, "
+                                             f"шаг {step_idx}, размер тензора: {latents.shape}")
+                        elif step_idx % 5 == 0:  # Каждый 5-й шаг
+                            self._log_message(f"TRAJECTORY: Шаг {step_idx}, "
+                                             f"длина траектории: {len(trajectory)}")
+                        elif step_idx == self.inference_steps - 1:  # Последний шаг
+                            self._log_message(f"TRAJECTORY: Финальный шаг {step_idx}, "
+                                             f"итоговая длина траектории: {len(trajectory)}")
+                        
+
 
                     # Обновляем прогресс по шагам денойзинга (текстовый и общий)
                     try:
@@ -396,6 +452,29 @@ class ImageGenerator:
                 
             # Сохраняем изображение
             pil_image.save(output_path)
+
+            # Пишем sidecar JSON с метаданными рядом с изображением
+            try:
+                meta = {
+                    "filename": str(Path(output_path).name),
+                    "class": class_name,
+                    "seed": int(seed) if seed is not None else None,
+                    "inference_steps": int(self.inference_steps),
+                    "scheduler": {
+                        "num_train_timesteps": 1000,
+                        "beta_schedule": "squaredcos_cap_v2",
+                        "prediction_type": "epsilon"
+                    },
+                    "model": self.model_manager.model_metadata.get(class_name, {}),
+                    "device": str(self.device),
+                    "noise_hash": noise_hash
+                }
+                meta_path = Path(output_path).with_suffix('.json')
+                with open(meta_path, 'w', encoding='utf-8') as f:
+                    json.dump(meta, f, indent=2, ensure_ascii=False)
+            except Exception as meta_err:
+                # Не прерываем генерацию из-за JSON
+                self._log_message(f"Не удалось записать метаданные JSON для {output_path}: {meta_err}", "warning")
             
             # Очищаем память после генерации
             self._cleanup_memory()
@@ -404,7 +483,13 @@ class ImageGenerator:
                 self._log_message(f"Изображение для класса {class_name} сгенерировано: {output_path}")
             else:
                 print(f"Изображение для класса {class_name} сгенерировано: {output_path}")
-            return True
+            
+            # Возвращаем успех и траекторию (если была сохранена)
+            final_trajectory = trajectory if self.save_trajectory else None
+            
+
+            
+            return True, final_trajectory
             
         except Exception as e:
             if hasattr(self, '_log_message'):
@@ -412,7 +497,7 @@ class ImageGenerator:
             else:
                 print(f"Ошибка генерации изображения для класса {class_name}: {e}")
             self._cleanup_memory()
-            return False
+            return False, None
             
     def _apply_color_postprocessing(self, image: Image.Image, class_name: str) -> Image.Image:
         """Применяет постобработку цветов на основе статистик"""
@@ -520,25 +605,38 @@ class ImageGenerator:
                 class_dir = output_path / class_name
                 class_dir.mkdir(exist_ok=True)
                 
+                # Счётчик изображений в текущем классе для XAI анализа
+                class_image_count = 0
+                
                 # Генерируем изображения по одному с постоянной очисткой памяти
                 for i in range(count):
                     if self.stop_requested:
                         break
-                        
+                    
                     # Генерируем имя файла в формате ISIC (нумерация внутри папки класса)
-                    isic_number = self.path_manager.get_next_isic_number(str(class_dir))
+                    # Используем class_image_count + 1 для правильной нумерации
+                    isic_number = class_image_count + 1
                     filename = self.path_manager.get_isic_filename(isic_number)
                     file_path = class_dir / filename
                     
                     # Генерируем изображение
                     # Рассчитываем индивидуальный seed для каждого изображения класса
+                    # Даже в режиме Random используем случайный, но фиксированный для файла seed,
+                    # чтобы XAI мог воспроизвести ту же траекторию
                     seed_value: Optional[int] = None
                     if self.base_seed is not None:
                         class_offset = class_seed_offsets.get(class_name, 0)
                         # seed = base + class_offset + индекс внутри класса
                         seed_value = (int(self.base_seed) + class_offset + i) & 0x7fffffff
+                    else:
+                        try:
+                            import secrets
+                            seed_value = secrets.randbelow(0x7fffffff)  # 31-битный
+                        except Exception:
+                            # Фолбэк на numpy
+                            seed_value = int(np.random.randint(0, 0x7fffffff))
 
-                    success = self.generate_single_image(
+                    success, trajectory = self.generate_single_image(
                         class_name,
                         str(file_path),
                         postprocess,
@@ -551,6 +649,7 @@ class ImageGenerator:
                     
                     if success:
                         generated_count += 1
+                        class_image_count += 1
                         
                         # Добавляем в CSV
                         self._append_to_csv(csv_path, {
@@ -565,6 +664,42 @@ class ImageGenerator:
                         self._update_progress(generated_count, total_images, 
                                            f"Сгенерировано {generated_count}/{total_images}")
                         
+                        # Проверяем, нужно ли запускать интегрированный XAI анализ
+                        should_run_xai = (self.xai_analyzer and trajectory and 
+                                         class_image_count % self.xai_frequency == 0)
+                        
+
+                        
+
+                        
+
+                        
+                        if should_run_xai:
+                            
+                            try:
+                                self._log_message(f"Запуск интегрированного XAI анализа для {class_name} (изображение {class_image_count})")
+                                
+                                
+                                
+                                # Запускаем XAI анализ с сохранённой траекторией
+                                xai_results = self._run_xai_analysis_integrated(
+                                    trajectory, class_name, seed_value, filename, str(file_path)
+                                )
+                                
+                                # Сохраняем результаты XAI анализа
+                                if xai_results:
+                                    self._save_xai_results(xai_results, class_name, filename, str(file_path))
+                                
+                                # Очищаем кеш траектории
+                                self._clear_trajectory_cache()
+                                
+                                self._log_message(f"XAI анализ для {class_name} завершён")
+                                
+                            except Exception as xai_err:
+                                self._log_message(f"Ошибка интегрированного XAI анализа: {xai_err}", "warning")
+                        
+
+                        
                         # Очищаем память после КАЖДОГО изображения
                         self._cleanup_memory()
                         
@@ -576,22 +711,8 @@ class ImageGenerator:
                             else:
                                 print(f"Память после изображения {generated_count}: {memory_used:.3f}ГБ")
                         
-                        # Запускаем XAI согласно правилу: для каждого класса каждые xai_every_n
-                        # и ровно один раз, если изображений в классе < xai_every_n
-                        try:
-                            if self.xai_hook:
-                                # Номер внутри класса = i (0-based); каждые N-е: i % N == 0
-                                if (i % self.xai_every_n == 0) or (count < self.xai_every_n and i == 0):
-                                    # Передаем в XAI путь и класс; seed будет прокинут через окружение
-                                    self.xai_hook(str(file_path), class_name)
-                                    # Сигнализируем GUI, что этот класс должен получить полный XAI (очередь)
-                                    if hasattr(self, 'log_callback') and self.log_callback:
-                                        seed_info = str(seed_value) if seed_value is not None else ''
-                                        steps_info = str(self.inference_steps)
-                                        self.log_callback(f"[XAI] enqueue_full:{class_name}:{file_path}:{seed_info}:{steps_info}")
-                        except Exception as _xai_err:
-                            # Не прерываем генерацию
-                            self._log_message(f"Ошибка XAI hook: {_xai_err}", "warning")
+                        # Старый XAI hook отключен - используем только интегрированный XAI анализатор
+                        # XAI анализ выполняется через интегрированный анализатор выше (строки 648-671)
                     
             # Финальное обновление
             if self.stop_requested:
@@ -712,3 +833,70 @@ class ImageGenerator:
                 self._log_message(f"Ошибка очистки ImageGenerator: {e}", "error")
             else:
                 print(f"Ошибка очистки ImageGenerator: {e}")
+    
+    def _run_xai_analysis_integrated(self, trajectory: List[torch.Tensor], 
+                                    class_name: str, seed: int, 
+                                    filename: str, file_path: str) -> Optional[Dict[str, Any]]:
+        """Запускает интегрированный XAI анализ с сохранённой траекторией"""
+        try:
+            if not self.xai_analyzer:
+                self._log_message("XAI анализатор не установлен", "warning")
+                return None
+            
+
+            
+            self._log_message(f"Запуск XAI анализа для {class_name} с seed {seed}")
+            
+            # Запускаем XAI анализ через анализатор
+            xai_results = self.xai_analyzer.analyze_trajectory(
+                trajectory=trajectory,
+                class_name=class_name,
+                seed=seed,
+                inference_steps=self.inference_steps,
+                filename=filename,
+                file_path=file_path
+            )
+            
+            return xai_results
+            
+        except Exception as e:
+            self._log_message(f"Ошибка интегрированного XAI анализа: {e}", "error")
+            return None
+    
+    def _save_xai_results(self, xai_results: Dict[str, Any], class_name: str, 
+                         filename: str, file_path: str):
+        """Сохраняет результаты XAI анализа"""
+        try:
+            # Создаём директорию для результатов XAI
+            xai_dir = Path(file_path).parent.parent / "xai_results" / class_name
+            xai_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Сохраняем результаты
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Убираем расширение из filename для более красивого имени
+            base_filename = Path(filename).stem
+            xai_file = xai_dir / f"xai_{base_filename}_{timestamp}.json"
+            
+            with open(xai_file, 'w', encoding='utf-8') as f:
+                json.dump(xai_results, f, indent=2, ensure_ascii=False)
+            
+            self._log_message(f"Результаты XAI анализа сохранены: {xai_file}")
+            
+        except Exception as e:
+            self._log_message(f"Ошибка сохранения результатов XAI: {e}", "warning")
+    
+    def _clear_trajectory_cache(self):
+        """Очищает кеш траекторий"""
+        try:
+            # Очищаем память траекторий
+            if hasattr(self, 'cache_manager') and self.cache_manager:
+                self.cache_manager.cleanup_temp_files()
+            
+            # Очищаем CUDA память
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            self._log_message("Кеш траекторий очищен")
+            
+        except Exception as e:
+            self._log_message(f"Ошибка очистки кеша траекторий: {e}", "warning")

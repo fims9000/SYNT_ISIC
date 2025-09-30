@@ -18,10 +18,14 @@ from PyQt5.QtGui import QFont, QIcon, QPixmap
 
 # Импортируем core пакет
 try:
-    from core import ConfigManager, ImageGenerator, Logger, PathManager, CacheManager
+    from core.config.config_manager import ConfigManager
+    from core.generator.image_generator import ImageGenerator
+    from core.utils.logger import Logger
+    from core.utils.path_manager import PathManager
+    from core.cache.cache_manager import CacheManager
     import torch  # Добавляем импорт torch для работы с CUDA
-except ImportError:
-    print("Ошибка импорта core пакета. Убедитесь, что все файлы созданы.")
+except ImportError as e:
+    print(f"Ошибка импорта core пакета: {e}")
     sys.exit(1)
 
 class GenerationWorker(QThread):
@@ -138,10 +142,38 @@ class SyntheticDataGenerator(QMainWindow):
             self.logger = Logger()
             self.cache_manager = CacheManager()
             self.generator = ImageGenerator(self.config_manager)
+            
             # Включаем XAI-хук: каждые 10 изображений
             self.generator.set_xai_hook(self._run_xai_for_image, every_n=10)
-            # Выставляем общий seed (при желании можно сделать настраиваемым)
-            self.generator.set_generation_seed(42)
+            
+            # Инициализируем интегрированный XAI анализатор
+            try:
+                xai_frequency = int(self.config_manager.get_generation_param("xai_frequency", 3))
+                self.generator.set_xai_frequency(xai_frequency)
+                self.generator.set_save_trajectory(True)
+                
+                # Создаём XAI анализатор
+                from xai.xai_integration import create_integrated_xai_analyzer
+                xai_analyzer = create_integrated_xai_analyzer()
+                self.generator.set_xai_analyzer(xai_analyzer)
+                
+                # Логируем успешную инициализацию (logs_text ещё не создан)
+                print(f"Интегрированный XAI анализатор инициализирован (частота: {xai_frequency})")
+            except Exception as e:
+                # Логируем предупреждение (logs_text ещё не создан)
+                print(f"Предупреждение: интегрированный XAI анализатор не инициализирован: {e}")
+                print("Будет использован стандартный XAI hook")
+                
+            # Применяем настройки сидов из конфига
+            try:
+                seed_mode = str(self.config_manager.get_generation_param("seed_mode")).lower()
+                seed_value = int(self.config_manager.get_generation_param("seed_value"))
+                if seed_mode == 'fixed':
+                    self.generator.set_generation_seed(seed_value)
+                else:
+                    self.generator.set_generation_seed(None)
+            except Exception:
+                self.generator.set_generation_seed(None)
         except Exception as e:
             QMessageBox.critical(None, "Ошибка инициализации", 
                                f"Не удалось инициализировать core компоненты: {str(e)}")
@@ -169,6 +201,14 @@ class SyntheticDataGenerator(QMainWindow):
         
         # Настраиваем логирование в GUI
         self.logger.setup_gui_handler(self.logs_text)
+        
+        # Теперь можем логировать в GUI - добавляем информацию об XAI анализаторе
+        if hasattr(self.generator, 'xai_analyzer') and self.generator.xai_analyzer:
+            self.logs_text.append("✅ Интегрированный XAI анализатор инициализирован")
+            self.logs_text.append(f"📊 XAI частота: каждое {self.generator.xai_frequency}-е изображение в классе")
+        else:
+            self.logs_text.append("⚠️ Интегрированный XAI анализатор не инициализирован")
+            self.logs_text.append("ℹ️ Будет использован стандартный XAI hook")
         
         # Создаем таймер для обновления информации о памяти
         self.memory_update_timer = QTimer()
@@ -411,35 +451,76 @@ class SyntheticDataGenerator(QMainWindow):
         self.select_output_btn = QPushButton("Выбрать папку вывода")
         self.select_output_btn.setToolTip("Выберите папку для сохранения изображений")
         
+        # Поле количества шагов инференса (единый источник)
+        self.inference_steps_spin = QSpinBox()
+        self.inference_steps_spin.setRange(1, 1000)
+        try:
+            self.inference_steps_spin.setValue(int(self.config_manager.get_generation_param("inference_timesteps")))
+        except Exception:
+            self.inference_steps_spin.setValue(50)
+        self.inference_steps_spin.setToolTip("Количество шагов инференса; рекомендуется 50-1000")
+
+        # Контрол режима сида: Random / Fixed
+        self.seed_mode_combo = QComboBox()
+        self.seed_mode_combo.addItems(["Random", "Fixed"])
+        try:
+            mode = str(self.config_manager.get_generation_param("seed_mode")).lower()
+            self.seed_mode_combo.setCurrentIndex(1 if mode == "fixed" else 0)
+        except Exception:
+            self.seed_mode_combo.setCurrentIndex(0)
+        self.seed_mode_combo.setToolTip("Режим сида генерации: Random или Fixed")
+
+        # Поле значения сида (активно при Fixed)
+        self.seed_value_spin = QSpinBox()
+        self.seed_value_spin.setRange(0, 2147483647)
+        try:
+            self.seed_value_spin.setValue(int(self.config_manager.get_generation_param("seed_value")))
+        except Exception:
+            self.seed_value_spin.setValue(42)
+        self.seed_value_spin.setToolTip("Значение фиксированного сида")
+        self.seed_value_spin.setEnabled(self.seed_mode_combo.currentText().lower() == "fixed")
+
         # Тумблер XAI Mode
         self.xai_mode_btn = QPushButton("Режим XAI")
         self.xai_mode_btn.setCheckable(True)
         self.xai_mode_btn.setToolTip("Включить режим объяснимого ИИ")
-        
+
         # ComboBox для выбора устройства с автоматическим определением
         self.device_combo = QComboBox()
         self._populate_device_combo()
         self.device_combo.setToolTip("Выберите устройство для генерации")
         
-        # Контрол частоты XAI по шагам (n_steps)
-        self.xai_step_spin = QSpinBox()
-        self.xai_step_spin.setRange(1, 1000)
-        self.xai_step_spin.setValue(50)  # по умолчанию как сейчас
-        self.xai_step_spin.setToolTip("Сохранять XAI шаги каждые N timesteps (0..1000, включительно 1000)")
+        # Период диффузии (количество шагов инференса на всю генерацию)
+        # Используем ранее созданный self.inference_steps_spin
+        self.inference_steps_spin.setToolTip("Период диффузии: сколько шагов будет сделано для получения изображения. Рекомендуется 50-1000")
+        
+        # Контрол частоты XAI анализа
+        self.xai_frequency_spin = QSpinBox()
+        self.xai_frequency_spin.setRange(1, 100)
+        try:
+            self.xai_frequency_spin.setValue(int(self.config_manager.get_generation_param("xai_frequency", 3)))
+        except Exception:
+            self.xai_frequency_spin.setValue(3)
+        self.xai_frequency_spin.setToolTip("Каждое N-ое изображение в классе будет проанализировано XAI")
         
         # Добавляем кнопки в layout
         button_layout.addWidget(self.select_model_btn)
         button_layout.addSpacing(10)
         button_layout.addWidget(self.select_output_btn)
         button_layout.addStretch()
-        button_layout.addWidget(self.xai_mode_btn)
-        button_layout.addSpacing(10)
-        button_layout.addWidget(QLabel("XAI шаги:"))
-        button_layout.addWidget(self.xai_step_spin)
-        button_layout.addSpacing(10)
+        # Порядок: устройство → Режим XAI → Период диффузии
         button_layout.addWidget(QLabel("Устройство:"))
         button_layout.addSpacing(5)
         button_layout.addWidget(self.device_combo)
+        button_layout.addSpacing(15)
+        button_layout.addWidget(self.xai_mode_btn)
+        button_layout.addSpacing(10)
+        button_layout.addWidget(QLabel("Период диффузии:"))
+        button_layout.addWidget(self.inference_steps_spin)
+        button_layout.addSpacing(10)
+        button_layout.addWidget(QLabel("XAI частота:"))
+        button_layout.addWidget(self.xai_frequency_spin)
+
         
         top_layout.addLayout(button_layout)
         
@@ -730,6 +811,11 @@ class SyntheticDataGenerator(QMainWindow):
         
         # ComboBox устройства
         self.device_combo.currentTextChanged.connect(self.on_device_changed)
+        # Изменение числа шагов инференса (период диффузии)
+        self.inference_steps_spin.valueChanged.connect(self.on_inference_steps_changed)
+        
+        # Изменение частоты XAI анализа
+        self.xai_frequency_spin.valueChanged.connect(self.on_xai_frequency_changed)
         
         # Тумблер XAI Mode
         self.xai_mode_btn.toggled.connect(self.on_xai_toggle)
@@ -965,12 +1051,62 @@ class SyntheticDataGenerator(QMainWindow):
         except Exception as e:
             self.logs_text.append(f"Ошибка обновления изображения: {str(e)}")
         
-        # Обновляем частоту шагов для XAI пайплайна через переменную окружения
+        # Обновляем параметры XAI в окружении согласно текущему периоду диффузии
         try:
-            os.environ["XAI_SAVE_EVERY_N"] = str(self.xai_step_spin.value())
-            self.logs_text.append(f"XAI n_steps set to: {self.xai_step_spin.value()}")
+            os.environ["XAI_INFERENCE_STEPS"] = str(self.inference_steps_spin.value())
+            self.logs_text.append(f"Период диффузии (XAI) синхронизирован: {self.inference_steps_spin.value()}")
         except Exception:
             pass
+
+    def on_inference_steps_changed(self, value: int):
+        try:
+            value = max(1, min(1000, int(value)))
+            self.config_manager.update_generation_param("inference_timesteps", value)
+            # Прокинем это же значение в генератор (единственный источник правды)
+            if hasattr(self, 'generator') and self.generator:
+                self.generator.inference_steps = value
+            # Также прокинем в XAI окружение для очереди полного анализа
+            os.environ['XAI_INFERENCE_STEPS'] = str(value)
+            self.logs_text.append(f"Шаги инференса установлены: {value}")
+        except Exception as e:
+            self.logs_text.append(f"Ошибка установки шагов инференса: {str(e)}")
+
+    def on_xai_frequency_changed(self, value: int):
+        try:
+            value = max(1, min(100, int(value)))
+            self.config_manager.update_generation_param("xai_frequency", value)
+            # Прокинем это же значение в генератор
+            if hasattr(self, 'generator') and self.generator:
+                self.generator.set_xai_frequency(value)
+            self.logs_text.append(f"XAI частота установлена: каждое {value}-е изображение в классе")
+        except Exception as e:
+            self.logs_text.append(f"Ошибка установки XAI частоты: {str(e)}")
+
+    def on_seed_mode_changed(self, text: str):
+        try:
+            mode = text.lower()
+            self.config_manager.update_generation_param("seed_mode", mode)
+            fixed = (mode == 'fixed')
+            self.seed_value_spin.setEnabled(fixed)
+            # Обновим генератор
+            if hasattr(self, 'generator') and self.generator:
+                if fixed:
+                    self.generator.set_generation_seed(self.seed_value_spin.value())
+                else:
+                    self.generator.set_generation_seed(None)
+            self.logs_text.append(f"Режим seed установлен: {text}")
+        except Exception as e:
+            self.logs_text.append(f"Ошибка установки режима seed: {str(e)}")
+
+    def on_seed_value_changed(self, value: int):
+        try:
+            self.config_manager.update_generation_param("seed_value", int(value))
+            if self.seed_mode_combo.currentText().lower() == 'fixed':
+                if hasattr(self, 'generator') and self.generator:
+                    self.generator.set_generation_seed(int(value))
+            self.logs_text.append(f"Seed value установлен: {int(value)}")
+        except Exception as e:
+            self.logs_text.append(f"Ошибка установки seed: {str(e)}")
             
     def open_xai_results_directory(self):
         """Открывает папку с результатами XAI"""
@@ -1384,17 +1520,29 @@ class SyntheticDataGenerator(QMainWindow):
         try:
             # Перехват решения об очереди полного XAI
             if isinstance(line, str) and line.startswith('[XAI] enqueue_full:'):
-                parts = line.split(':', 4)
-                if len(parts) >= 3:
-                    class_name = parts[1]
-                    file_path = parts[2]
-                    seed_value = parts[3] if len(parts) >= 4 else ''
-                    inf_steps = parts[4] if len(parts) >= 5 else ''
-                    # Добавляем в очередь, если ещё нет активного воркера
-                    self.xai_queue.append((class_name, file_path, seed_value, inf_steps))
-                    # Если воркер не работает — стартуем следующий
-                    if (not self.xai_worker) or (self.xai_worker and not self.xai_worker.isRunning()):
-                        self._start_next_xai_job()
+                payload = line[len('[XAI] enqueue_full:'):]
+                # payload формат: {class_name}:{file_path}:{seed}:{steps}
+                # Так как в Windows-пути есть двоеточие (C:\), парсим аккуратно:
+                # 1) отделяем class_name слева один раз
+                if ':' in payload:
+                    class_name, rest = payload.split(':', 1)
+                else:
+                    class_name, rest = payload, ''
+                # 2) откусываем справа seed и steps
+                seed_value = ''
+                inf_steps = ''
+                file_path = rest
+                if rest:
+                    tail_split = rest.rsplit(':', 2)
+                    if len(tail_split) == 3:
+                        file_path, seed_value, inf_steps = tail_split
+                    elif len(tail_split) == 2:
+                        file_path, seed_value = tail_split
+                # Добавляем в очередь, если ещё нет активного воркера
+                self.xai_queue.append((class_name, file_path, seed_value, inf_steps))
+                # Если воркер не работает — стартуем следующий
+                if (not self.xai_worker) or (self.xai_worker and not self.xai_worker.isRunning()):
+                    self._start_next_xai_job()
                 return
             # Обычный лог
             self.logs_text.append(line)
@@ -1408,6 +1556,7 @@ class SyntheticDataGenerator(QMainWindow):
             class_name, file_path, seed_value, inf_steps = self.xai_queue.pop(0)
             import os as _os
             _os.environ['XAI_TARGET_CLASS'] = class_name
+            _os.environ['XAI_IMAGE_PATH'] = file_path
             if seed_value:
                 _os.environ['XAI_GENERATION_SEED'] = seed_value
             if inf_steps:

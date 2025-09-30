@@ -1,29 +1,5 @@
 {
   "models": {
-    "AKIEC": {
-      "cached_path": "core\\cache\\models\\AKIEC_0d9fe5af.pth",
-      "original_path": "C:\\ISICGUI\\checkpoints\\unet_AKIEC_best.pth",
-      "hash": "0d9fe5af44dec79a12c68bb338ce204b",
-      "size_bytes": 101346027,
-      "cached_at": "2025-08-20T13:12:50.984086",
-      "last_accessed": "2025-08-20T13:12:50.984086"
-    },
-    "BCC": {
-      "cached_path": "core\\cache\\models\\BCC_bd037d2f.pth",
-      "original_path": "C:\\ISICGUI\\checkpoints\\unet_BCC_best.pth",
-      "hash": "bd037d2f6ba25879cbdb60ceb04038f8",
-      "size_bytes": 101345355,
-      "cached_at": "2025-08-20T13:12:51.423703",
-      "last_accessed": "2025-08-20T13:12:51.423703"
-    },
-    "BKL": {
-      "cached_path": "core\\cache\\models\\BKL_daac13fd.pth",
-      "original_path": "C:\\ISICGUI\\checkpoints\\unet_BKL_best.pth",
-      "hash": "daac13fd3e416f8cddaa7dc5fa151694",
-      "size_bytes": 101345355,
-      "cached_at": "2025-08-20T13:12:51.871506",
-      "last_accessed": "2025-08-20T13:12:51.871506"
-    },
     "DF": {
       "cached_path": "core\\cache\\models\\DF_73f1a6f2.pth",
       "original_path": "C:\\ISICGUI\\checkpoints\\unet_DF_best.pth",
@@ -33,28 +9,52 @@
       "last_accessed": "2025-08-20T13:12:52.337950"
     },
     "MEL": {
-      "cached_path": "core\\cache\\models\\MEL_2ac65ed9.pth",
-      "original_path": "C:\\ISICGUI\\checkpoints\\unet_MEL_best.pth",
+      "cached_path": "C:\\isictests2\\SYNT_ISIC\\core\\cache\\models\\MEL_2ac65ed9.pth",
+      "original_path": "C:\\isictests2\\SYNT_ISIC\\checkpoints\\unet_MEL_best.pth",
       "hash": "2ac65ed9c2c62ace6d6bcfc4a3e755a8",
       "size_bytes": 101345355,
-      "cached_at": "2025-08-20T13:12:52.811591",
-      "last_accessed": "2025-08-27T21:13:57.439795"
+      "cached_at": "2025-08-30T22:07:41.174853",
+      "last_accessed": "2025-09-29T20:15:48.024681"
     },
     "NV": {
-      "cached_path": "core\\cache\\models\\NV_2f0a1b04.pth",
-      "original_path": "C:\\ISICGUI\\checkpoints\\unet_NV_best.pth",
+      "cached_path": "C:\\isictests2\\SYNT_ISIC\\core\\cache\\models\\NV_2f0a1b04.pth",
+      "original_path": "C:\\isictests2\\SYNT_ISIC\\checkpoints\\unet_NV_best.pth",
       "hash": "2f0a1b04b5edbf77c0c38974e10e8609",
       "size_bytes": 101345019,
-      "cached_at": "2025-08-20T13:12:53.240219",
-      "last_accessed": "2025-08-27T22:23:00.216408"
+      "cached_at": "2025-08-31T19:19:59.141764",
+      "last_accessed": "2025-09-29T20:33:11.707372"
+    },
+    "BCC": {
+      "cached_path": "C:\\isictests2\\SYNT_ISIC\\core\\cache\\models\\BCC_bd037d2f.pth",
+      "original_path": "C:\\isictests2\\SYNT_ISIC\\checkpoints\\unet_BCC_best.pth",
+      "hash": "bd037d2f6ba25879cbdb60ceb04038f8",
+      "size_bytes": 101345355,
+      "cached_at": "2025-08-31T19:47:02.634197",
+      "last_accessed": "2025-09-29T23:14:25.883129"
+    },
+    "BKL": {
+      "cached_path": "C:\\isictests2\\SYNT_ISIC\\core\\cache\\models\\BKL_daac13fd.pth",
+      "original_path": "C:\\isictests2\\SYNT_ISIC\\checkpoints\\unet_BKL_best.pth",
+      "hash": "daac13fd3e416f8cddaa7dc5fa151694",
+      "size_bytes": 101345355,
+      "cached_at": "2025-08-31T23:41:03.301989",
+      "last_accessed": "2025-09-04T11:34:24.552323"
+    },
+    "AKIEC": {
+      "cached_path": "C:\\isictests2\\SYNT_ISIC\\core\\cache\\models\\AKIEC_0d9fe5af.pth",
+      "original_path": "C:\\isictests2\\SYNT_ISIC\\checkpoints\\unet_AKIEC_best.pth",
+      "hash": "0d9fe5af44dec79a12c68bb338ce204b",
+      "size_bytes": 101346027,
+      "cached_at": "2025-09-04T11:20:00.953398",
+      "last_accessed": "2025-09-04T23:22:23.027852"
     },
     "VASC": {
-      "cached_path": "core\\cache\\models\\VASC_db426972.pth",
-      "original_path": "C:\\ISICGUI\\checkpoints\\unet_VASC_best.pth",
+      "cached_path": "C:\\isictests2\\SYNT_ISIC\\core\\cache\\models\\VASC_db426972.pth",
+      "original_path": "C:\\isictests2\\SYNT_ISIC\\checkpoints\\unet_VASC_best.pth",
       "hash": "db426972e1e090237eeef19fdc2b804c",
       "size_bytes": 101345691,
-      "cached_at": "2025-08-20T13:12:53.667654",
-      "last_accessed": "2025-08-20T13:12:53.667654"
+      "cached_at": "2025-09-04T11:53:39.267017",
+      "last_accessed": "2025-09-04T19:50:17.170529"
     }
   },
   "temp_files": {},

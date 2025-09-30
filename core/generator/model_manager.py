@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from diffusers import UNet2DModel, DDPMScheduler
 
-from ..cache import CacheManager
-from ..utils import PathManager, Logger
-from ..config import ConfigManager
+from core.cache.cache_manager import CacheManager
+from core.utils.path_manager import PathManager
+from core.utils.logger import Logger
+from core.config.config_manager import ConfigManager
 
 
 class ModelManager:
